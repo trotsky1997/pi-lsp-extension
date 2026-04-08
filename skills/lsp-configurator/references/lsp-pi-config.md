@@ -109,6 +109,7 @@ Common keys:
 - `markdownlint`
 - `shellcheck`
 - `hadolint`
+- `slopgrep`
 
 ## Good default mappings
 
@@ -118,6 +119,7 @@ Common keys:
 - Go: `gopls`, formatter `gofmt`, analyzer `golangci-lint`
 - Rust: `rust-analyzer`, formatter `rustfmt`
 - Markdown: `markdown`, formatter `rumdl`, analyzer `markdownlint`
+- Markdown / prose-heavy docs: optionally add analyzer `slopgrep`
 - Shell: formatter `shfmt`, analyzer `shellcheck`
 - Dockerfile: analyzer `hadolint`
 - Terraform: `terraform`, formatter `terraform`

@@ -24,7 +24,13 @@ It also ships a reusable setup skill at `skills/lsp-configurator/` for interacti
 Install the package:
 
 ```bash
-pi install npm:lsp-pi
+pi install https://github.com/trotsky1997/pi-lsp-extension
+```
+
+To pin a ref or tag, use Pi's git package syntax:
+
+```bash
+pi install git:github.com/trotsky1997/pi-lsp-extension@main
 ```
 
 Create a project config:
@@ -89,6 +95,7 @@ Built-in LSP server IDs:
 - `prisma`
 - `pyright`
 - `basedpyright`
+- `texlab`
 - `ty`
 - `ruby-lsp`
 - `rust-analyzer`
@@ -144,6 +151,7 @@ Built-in analyzer IDs:
 - `markdownlint`
 - `ruff-check`
 - `semgrep`
+- `slopgrep`
 - `shellcheck`
 
 Analyzers are for extra diagnostics, not LSP features and not file rewriting.
@@ -158,6 +166,7 @@ npm i -g typescript-language-server typescript prettier @biomejs/biome
 npm i -g rumdl @semgrep/cli markdownlint-cli
 npm i -g vscode-langservers-extracted   # eslint, html, css, json
 npm i -g yaml-language-server bash-language-server
+uv tool install git+https://github.com/trotsky1997/slopgrep.git
 
 # Vue / Svelte / Astro / Prisma
 npm i -g @vue/language-server svelte-language-server @astrojs/language-server
@@ -186,6 +195,9 @@ xcode-select --install   # sourcekit-lsp via Xcode CLT on macOS
 brew install terraform-ls shfmt shellcheck hadolint nixd nixfmt gleam
 # Dart and Flutter usually provide dart language-server and dart format themselves
 
+# LaTeX / BibTeX
+cargo install texlab
+
 # C# / F#
 dotnet tool install --global csharp-ls
 dotnet tool install --global fsautocomplete
@@ -209,7 +221,8 @@ Notes:
 - `sourcekit-lsp`, `dart format`, `mix format`, `gofmt`, and `rustfmt` often come from their main toolchains.
 - `rumdl` provides both the Markdown LSP (`rumdl server`) and formatter (`rumdl fmt`).
 - `semgrep` is an analyzer, not an LSP or formatter.
-- Common analyzer-style tools bundled today are `semgrep`, `ruff check`, `golangci-lint run`, `markdownlint`, `shellcheck`, and `hadolint`.
+- `slopgrep` is useful for prose-heavy repositories and AI-writing-tell scanning in Markdown or text files.
+- Common analyzer-style tools bundled today are `semgrep`, `ruff check`, `golangci-lint run`, `markdownlint`, `shellcheck`, `hadolint`, and `slopgrep`.
 - Package names vary by OS and package manager; the important part is that the expected executable is on `PATH`.
 
 ## Commands

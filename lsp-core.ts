@@ -64,6 +64,7 @@ export const LANGUAGE_IDS: Record<string, string> = {
   ".js": "javascript", ".jsx": "javascriptreact", ".mjs": "javascript",
   ".cjs": "javascript", ".mts": "typescript", ".cts": "typescript",
   ".md": "markdown", ".mdx": "mdx",
+  ".tex": "latex", ".bib": "bibtex", ".sty": "latex", ".cls": "latex",
   ".vue": "vue", ".svelte": "svelte", ".astro": "astro",
   ".py": "python", ".pyi": "python", ".go": "go", ".rs": "rust",
   ".c": "c", ".h": "c", ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp",
@@ -488,6 +489,7 @@ async function spawnSourcekitLsp(root: string, settings: LSPServerSettings): Pro
 // Server Configs
 export const LSP_SERVERS: LSPServerConfig[] = [
   { id: "markdown", extensions: [".md", ".mdx"], findRoot: workspaceRoot(), spawn: simpleSpawn("rumdl", ["server"]) },
+  { id: "texlab", extensions: [".tex", ".bib", ".sty", ".cls"], findRoot: markerRoot(["texlabroot", "Tectonic.toml", ".latexmkrc", ".git"]), spawn: simpleSpawn("texlab") },
   {
     id: "dart", extensions: [".dart"],
     findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, ["pubspec.yaml", "analysis_options.yaml"])),

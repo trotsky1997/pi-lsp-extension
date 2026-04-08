@@ -167,6 +167,7 @@ Each entry under `analyzer.tools.<analyzerId>` or `analyzer.analyzers.<analyzerI
 - `prisma`
 - `pyright`
 - `basedpyright`
+- `texlab`
 - `ty`
 - `ruby-lsp`
 - `rust-analyzer`
@@ -214,6 +215,7 @@ Each entry under `analyzer.tools.<analyzerId>` or `analyzer.analyzers.<analyzerI
 - `markdownlint`
 - `ruff-check`
 - `semgrep`
+- `slopgrep`
 - `shellcheck`
 
 ## Merge rules
@@ -328,6 +330,7 @@ Global and project settings are merged with these rules:
 - `markdownlint` for Markdown
 - `shellcheck` for shell scripts
 - `hadolint` for `Dockerfile`
+- `slopgrep` for Markdown and prose-heavy text files
 
 ## Notes
 

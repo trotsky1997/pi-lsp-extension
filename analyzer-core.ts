@@ -280,6 +280,47 @@ function parseHadolintOutput(stdout: string, fallbackFilePath: string): Analyzer
   }
 }
 
+function parseSlopgrepOutput(stdout: string, fallbackFilePath: string): AnalyzerFinding[] {
+  try {
+    const parsed = JSON.parse(stdout) as {
+      findings?: Array<{
+        rule_id?: string;
+        id?: string;
+        message?: string;
+        severity?: string;
+        path?: string;
+        file?: string;
+        line?: number;
+        column?: number;
+        start?: { line?: number; column?: number; col?: number };
+      }>;
+      results?: Array<{
+        rule_id?: string;
+        id?: string;
+        message?: string;
+        severity?: string;
+        path?: string;
+        file?: string;
+        line?: number;
+        column?: number;
+        start?: { line?: number; column?: number; col?: number };
+      }>;
+    };
+    const items = parsed.findings ?? parsed.results ?? [];
+    return items.map((issue) => ({
+      source: "slopgrep",
+      ruleId: issue.rule_id ?? issue.id,
+      message: issue.message ?? issue.rule_id ?? issue.id ?? "slopgrep finding",
+      severity: normalizeSeverity(issue.severity),
+      filePath: issue.path ? path.resolve(issue.path) : issue.file ? path.resolve(issue.file) : fallbackFilePath,
+      line: issue.start?.line ?? issue.line ?? 1,
+      column: issue.start?.column ?? issue.start?.col ?? issue.column ?? 1,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 const DEFAULT_SEMGREP_EXTENSIONS = [
   ".js", ".jsx", ".ts", ".tsx", ".py", ".go", ".java", ".rb", ".php", ".yaml", ".yml",
   ".tf", ".c", ".cc", ".cpp", ".cs", ".kt", ".swift", ".scala", ".sh", ".md",
@@ -331,6 +372,13 @@ export const ANALYZERS: AnalyzerConfig[] = [
     (file) => ["-f", "json", file],
     parseHadolintOutput,
     { fileNames: ["Dockerfile"] },
+  ),
+  directBinaryAnalyzer(
+    "slopgrep",
+    [".md", ".mdx", ".txt", ".rst", ".adoc"],
+    "slopgrep",
+    (file) => ["scan", "--json", file],
+    parseSlopgrepOutput,
   ),
 ];
 

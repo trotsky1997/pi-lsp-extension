@@ -13,7 +13,7 @@ Produce a working `lsp-pi` configuration for the user's stack across these three
 
 - `lsp` for language servers
 - `formatter` for format-on-write tools
-- `analyzer` for non-LSP diagnostics such as `semgrep`, `ruff-check`, `golangci-lint`, `markdownlint`, `shellcheck`, and `hadolint`
+- `analyzer` for non-LSP diagnostics such as `semgrep`, `ruff-check`, `golangci-lint`, `markdownlint`, `shellcheck`, `hadolint`, and `slopgrep`
 
 Because `lsp-pi` is config-first, do not route configuration through `/lsp`. `/lsp` is status/help only.
 
@@ -100,7 +100,7 @@ If many `.md` / `.mdx` files exist, propose:
 
 - LSP: `markdown` via `rumdl`
 - Formatter: `rumdl`
-- Analyzer: `markdownlint`
+- Analyzer: `markdownlint`, and optionally `slopgrep` for prose-quality / AI-writing-tell scanning
 
 ### Shell / Docker / IaC
 

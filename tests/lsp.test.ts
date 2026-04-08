@@ -128,6 +128,12 @@ test("LANGUAGE_IDS: Markdown extensions", async () => {
   assertEquals(LANGUAGE_IDS[".mdx"], "mdx", ".mdx should map to mdx");
 });
 
+test("LANGUAGE_IDS: LaTeX extensions", async () => {
+  assertEquals(LANGUAGE_IDS[".tex"], "latex", ".tex should map to latex");
+  assertEquals(LANGUAGE_IDS[".bib"], "bibtex", ".bib should map to bibtex");
+  assertEquals(LANGUAGE_IDS[".sty"], "latex", ".sty should map to latex");
+});
+
 // ============================================================================
 // Server configuration tests
 // ============================================================================
@@ -195,7 +201,7 @@ test("LSP_SERVERS: has Ty server", async () => {
 
 test("LSP_SERVERS: includes opencode-style built-ins", async () => {
   const ids = [
-    "astro", "bash", "clangd", "deno", "eslint", "lua-ls", "markdown",
+    "astro", "bash", "clangd", "deno", "eslint", "lua-ls", "markdown", "texlab",
     "nixd", "php", "prisma", "terraform", "tinymist", "yaml-ls", "zls",
   ];
   for (const id of ids) {
@@ -215,7 +221,7 @@ test("ANALYZERS: includes semgrep", async () => {
 });
 
 test("ANALYZERS: includes common linter-style analyzers", async () => {
-  const ids = ["ruff-check", "golangci-lint", "markdownlint", "shellcheck", "hadolint"];
+  const ids = ["ruff-check", "golangci-lint", "markdownlint", "shellcheck", "hadolint", "slopgrep"];
   for (const id of ids) {
     assert(ANALYZERS.some((analyzer) => analyzer.id === id), `Should have ${id} analyzer`);
   }
@@ -228,6 +234,17 @@ test("markdown: uses workspace root", async () => {
     const server = LSP_SERVERS.find(s => s.id === "markdown")!;
     const root = server.findRoot(join(dir, "docs/guide.md"), dir, {});
     assertEquals(root, dir, "Markdown should use workspace root");
+  });
+});
+
+test("texlab: finds root with texlabroot marker", async () => {
+  await withTempDir({
+    "paper/texlabroot": "",
+    "paper/main.tex": "\\documentclass{article}",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "texlab")!;
+    const root = server.findRoot(join(dir, "paper/main.tex"), dir, {});
+    assertEquals(root, join(dir, "paper"), "texlab should use texlabroot when present");
   });
 });
 
@@ -1194,6 +1211,15 @@ test("analyzer matching: markdownlint matches markdown files", async () => {
   }, async (dir) => {
     const matches = getAnalyzerConfigsForFile(join(dir, "README.md"), dir);
     assert(matches.some((analyzer) => analyzer.id === "markdownlint"), "markdownlint should match markdown files");
+  });
+});
+
+test("analyzer matching: slopgrep matches prose files", async () => {
+  await withTempDir({
+    "docs/notes.md": "Here is a note.",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "docs/notes.md"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "slopgrep"), "slopgrep should match markdown files");
   });
 });
 
