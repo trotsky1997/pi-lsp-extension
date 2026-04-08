@@ -8,6 +8,7 @@ interface AnalyzerCommand {
   args: string[];
   cwd: string;
   env?: Record<string, string>;
+  outputFile?: string;
 }
 
 interface AnalyzerConfig {
@@ -16,7 +17,7 @@ interface AnalyzerConfig {
   fileNames?: string[];
   rootMarkers?: string[];
   resolveCommand: (filePath: string, cwd: string, settings: AnalyzerSettings) => AnalyzerCommand | undefined;
-  parseOutput: (stdout: string, filePath: string) => AnalyzerFinding[];
+  parseOutput: (stdout: string, filePath: string, command: AnalyzerCommand) => AnalyzerFinding[];
 }
 
 export interface AnalyzerFinding {
@@ -31,9 +32,11 @@ export interface AnalyzerFinding {
 
 export interface AnalyzerRunResult {
   analyzerId?: string;
+  analyzerIds?: string[];
   findings: AnalyzerFinding[];
   skipped?: string;
   error?: string;
+  errors?: string[];
 }
 
 const SEARCH_PATHS = [
@@ -89,7 +92,7 @@ function configuredAnalyzerCommand(
   cwd: string,
   settings: AnalyzerSettings,
   defaultCommand: (root: string) => string | undefined,
-  defaultArgs: (file: string, root: string) => string[],
+  defaultArgs: (file: string, root: string) => { args: string[]; outputFile?: string },
   fallbackMarkers: string[] = [],
 ): AnalyzerCommand | undefined {
   if (settings.disabled) return undefined;
@@ -98,11 +101,13 @@ function configuredAnalyzerCommand(
   const command = settings.command ?? defaultCommand(root);
   if (!command) return undefined;
 
+  const defaultCommandConfig = defaultArgs(filePath, root);
   return {
     command,
-    args: settings.args ?? defaultArgs(filePath, root),
+    args: settings.args ?? defaultCommandConfig.args,
     cwd: root,
     env: buildAnalyzerEnv(settings),
+    outputFile: defaultCommandConfig.outputFile,
   };
 }
 
@@ -110,8 +115,8 @@ function directBinaryAnalyzer(
   id: string,
   extensions: string[],
   binaryName: string,
-  defaultArgs: (file: string, root: string) => string[],
-  parseOutput: (stdout: string, filePath: string) => AnalyzerFinding[],
+  defaultArgs: (file: string, root: string) => { args: string[]; outputFile?: string },
+  parseOutput: (stdout: string, filePath: string, command: AnalyzerCommand) => AnalyzerFinding[],
   options: { rootMarkers?: string[]; fileNames?: string[] } = {},
 ): AnalyzerConfig {
   return {
@@ -138,9 +143,17 @@ function normalizeSeverity(value: string | undefined): "error" | "warning" | "in
   return "warning";
 }
 
-function parseSemgrepOutput(stdout: string, fallbackFilePath: string): AnalyzerFinding[] {
+function readOutputFileIfPresent(command: AnalyzerCommand, stdout: string): string {
+  if (!command.outputFile) return stdout;
   try {
-    const parsed = JSON.parse(stdout) as {
+    if (fs.existsSync(command.outputFile)) return fs.readFileSync(command.outputFile, "utf-8");
+  } catch {}
+  return stdout;
+}
+
+function parseSemgrepOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
+  try {
+    const parsed = JSON.parse(readOutputFileIfPresent(command, stdout)) as {
       results?: Array<{
         check_id?: string;
         path?: string;
@@ -162,9 +175,9 @@ function parseSemgrepOutput(stdout: string, fallbackFilePath: string): AnalyzerF
   }
 }
 
-function parseRuffOutput(stdout: string, fallbackFilePath: string): AnalyzerFinding[] {
+function parseRuffOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
   try {
-    const parsed = JSON.parse(stdout) as Array<{
+    const parsed = JSON.parse(readOutputFileIfPresent(command, stdout)) as Array<{
       code?: string;
       message?: string;
       filename?: string;
@@ -184,9 +197,9 @@ function parseRuffOutput(stdout: string, fallbackFilePath: string): AnalyzerFind
   }
 }
 
-function parseGolangciLintOutput(stdout: string, _fallbackFilePath: string): AnalyzerFinding[] {
+function parseGolangciLintOutput(stdout: string, _fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
   try {
-    const parsed = JSON.parse(stdout) as {
+    const parsed = JSON.parse(readOutputFileIfPresent(command, stdout)) as {
       Issues?: Array<{
         FromLinter?: string;
         Text?: string;
@@ -208,9 +221,9 @@ function parseGolangciLintOutput(stdout: string, _fallbackFilePath: string): Ana
   }
 }
 
-function parseMarkdownlintOutput(stdout: string, fallbackFilePath: string): AnalyzerFinding[] {
+function parseMarkdownlintOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
   try {
-    const parsed = JSON.parse(stdout) as Array<{
+    const parsed = JSON.parse(readOutputFileIfPresent(command, stdout)) as Array<{
       fileName?: string;
       lineNumber?: number;
       ruleNames?: string[];
@@ -232,9 +245,9 @@ function parseMarkdownlintOutput(stdout: string, fallbackFilePath: string): Anal
   }
 }
 
-function parseShellcheckOutput(stdout: string, fallbackFilePath: string): AnalyzerFinding[] {
+function parseShellcheckOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
   try {
-    const parsed = JSON.parse(stdout) as Array<{
+    const parsed = JSON.parse(readOutputFileIfPresent(command, stdout)) as Array<{
       code?: number;
       file?: string;
       level?: string;
@@ -256,9 +269,9 @@ function parseShellcheckOutput(stdout: string, fallbackFilePath: string): Analyz
   }
 }
 
-function parseHadolintOutput(stdout: string, fallbackFilePath: string): AnalyzerFinding[] {
+function parseHadolintOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
   try {
-    const parsed = JSON.parse(stdout) as Array<{
+    const parsed = JSON.parse(readOutputFileIfPresent(command, stdout)) as Array<{
       code?: string;
       file?: string;
       level?: string;
@@ -280,9 +293,9 @@ function parseHadolintOutput(stdout: string, fallbackFilePath: string): Analyzer
   }
 }
 
-function parseSlopgrepOutput(stdout: string, fallbackFilePath: string): AnalyzerFinding[] {
+function parseSlopgrepOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
   try {
-    const parsed = JSON.parse(stdout) as {
+    const parsed = JSON.parse(readOutputFileIfPresent(command, stdout)) as {
       findings?: Array<{
         rule_id?: string;
         id?: string;
@@ -321,6 +334,84 @@ function parseSlopgrepOutput(stdout: string, fallbackFilePath: string): Analyzer
   }
 }
 
+function parseSloppylintOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
+  try {
+    const parsed = JSON.parse(readOutputFileIfPresent(command, stdout)) as {
+      issues?: Array<{
+        rule?: string;
+        check?: string;
+        message?: string;
+        severity?: string;
+        file?: string;
+        path?: string;
+        line?: number;
+        column?: number;
+      }>;
+      findings?: Array<{
+        rule?: string;
+        check?: string;
+        message?: string;
+        severity?: string;
+        file?: string;
+        path?: string;
+        line?: number;
+        column?: number;
+      }>;
+    };
+    const items = parsed.issues ?? parsed.findings ?? [];
+    return items.map((issue) => ({
+      source: "sloppylint",
+      ruleId: issue.rule ?? issue.check,
+      message: issue.message ?? issue.rule ?? issue.check ?? "sloppylint finding",
+      severity: normalizeSeverity(issue.severity),
+      filePath: issue.file ? path.resolve(issue.file) : issue.path ? path.resolve(issue.path) : fallbackFilePath,
+      line: issue.line ?? 1,
+      column: issue.column ?? 1,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function parseKarpeSlopOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
+  try {
+    const parsed = JSON.parse(readOutputFileIfPresent(command, stdout)) as {
+      issues?: Array<{
+        type?: string;
+        id?: string;
+        message?: string;
+        severity?: string;
+        file?: string;
+        path?: string;
+        line?: number;
+        column?: number;
+      }>;
+      findings?: Array<{
+        type?: string;
+        id?: string;
+        message?: string;
+        severity?: string;
+        file?: string;
+        path?: string;
+        line?: number;
+        column?: number;
+      }>;
+    };
+    const items = parsed.issues ?? parsed.findings ?? [];
+    return items.map((issue) => ({
+      source: "karpeslop",
+      ruleId: issue.type ?? issue.id,
+      message: issue.message ?? issue.type ?? issue.id ?? "karpeslop finding",
+      severity: normalizeSeverity(issue.severity),
+      filePath: issue.file ? path.resolve(issue.file) : issue.path ? path.resolve(issue.path) : fallbackFilePath,
+      line: issue.line ?? 1,
+      column: issue.column ?? 1,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 const DEFAULT_SEMGREP_EXTENSIONS = [
   ".js", ".jsx", ".ts", ".tsx", ".py", ".go", ".java", ".rb", ".php", ".yaml", ".yml",
   ".tf", ".c", ".cc", ".cpp", ".cs", ".kt", ".swift", ".scala", ".sh", ".md",
@@ -331,7 +422,7 @@ export const ANALYZERS: AnalyzerConfig[] = [
     "semgrep",
     DEFAULT_SEMGREP_EXTENSIONS,
     "semgrep",
-    (file) => ["scan", "--json", "--quiet", "--config=auto", file],
+    (file) => ({ args: ["scan", "--json", "--quiet", "--config=auto", file] }),
     parseSemgrepOutput,
     { rootMarkers: [".git", "semgrep.yml", ".semgrep.yml", ".semgrepignore"] },
   ),
@@ -339,7 +430,7 @@ export const ANALYZERS: AnalyzerConfig[] = [
     "ruff-check",
     [".py", ".pyi"],
     "ruff",
-    (file) => ["check", "--output-format", "json", file],
+    (file) => ({ args: ["check", "--output-format", "json", file] }),
     parseRuffOutput,
     { rootMarkers: ["pyproject.toml", "ruff.toml"] },
   ),
@@ -347,7 +438,7 @@ export const ANALYZERS: AnalyzerConfig[] = [
     "golangci-lint",
     [".go"],
     "golangci-lint",
-    (_file, root) => ["run", "--out-format", "json", "./..."],
+    (_file, root) => ({ args: ["run", "--out-format", "json", "./..."] }),
     parseGolangciLintOutput,
     { rootMarkers: ["go.work", "go.mod", ".golangci.yml", ".golangci.yaml", ".golangci.toml", ".golangci.json"] },
   ),
@@ -355,21 +446,21 @@ export const ANALYZERS: AnalyzerConfig[] = [
     "markdownlint",
     [".md", ".mdx"],
     "markdownlint",
-    (file) => ["--json", file],
+    (file) => ({ args: ["--json", file] }),
     parseMarkdownlintOutput,
   ),
   directBinaryAnalyzer(
     "shellcheck",
     [".sh", ".bash", ".zsh"],
     "shellcheck",
-    (file) => ["--format", "json", file],
+    (file) => ({ args: ["--format", "json", file] }),
     parseShellcheckOutput,
   ),
   directBinaryAnalyzer(
     "hadolint",
     [],
     "hadolint",
-    (file) => ["-f", "json", file],
+    (file) => ({ args: ["-f", "json", file] }),
     parseHadolintOutput,
     { fileNames: ["Dockerfile"] },
   ),
@@ -377,8 +468,30 @@ export const ANALYZERS: AnalyzerConfig[] = [
     "slopgrep",
     [".md", ".mdx", ".txt", ".rst", ".adoc", ".tex"],
     "slopgrep",
-    (file) => ["scan", "--json", file],
+    (file) => ({ args: ["scan", "--json", file] }),
     parseSlopgrepOutput,
+  ),
+  directBinaryAnalyzer(
+    "sloppylint",
+    [".py", ".pyi"],
+    "sloppylint",
+    (file, root) => {
+      const outputFile = path.join(root, ".sloppylint-report.json");
+      return { args: [file, "--output", outputFile], outputFile };
+    },
+    parseSloppylintOutput,
+    { rootMarkers: ["pyproject.toml", ".git"] },
+  ),
+  directBinaryAnalyzer(
+    "karpeslop",
+    [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"],
+    "karpeslop",
+    (_file, root) => {
+      const outputFile = path.join(root, "ai-slop-report.json");
+      return { args: ["--quiet"], outputFile };
+    },
+    parseKarpeSlopOutput,
+    { rootMarkers: ["package.json", "tsconfig.json", "jsconfig.json", ".karpesloprc.json"] },
   ),
 ];
 
@@ -428,33 +541,38 @@ export async function runAnalyzersForFile(filePath: string, cwd: string): Promis
   const candidates = getAnalyzerConfigsForFile(absPath, cwd);
   if (candidates.length === 0) return { findings: [], skipped: "no_match" };
 
+  const analyzerIds: string[] = [];
+  const findings: AnalyzerFinding[] = [];
+  const errors: string[] = [];
+
   for (const analyzer of candidates) {
     const command = analyzer.resolveCommand(absPath, cwd, settings.analyzers[analyzer.id] ?? {});
     if (!command) continue;
 
+    analyzerIds.push(analyzer.id);
+
     try {
       const result = await runCommand(command);
-      const findings = analyzer.parseOutput(result.stdout, absPath).filter((finding) => finding.filePath === "" || path.resolve(finding.filePath) === absPath);
-      if (result.code !== 0 && findings.length === 0) {
-        return {
-          analyzerId: analyzer.id,
-          findings: [],
-          error: result.stderr.trim() || (result.signal ? `analyzer exited via signal ${result.signal}` : `analyzer exited with code ${result.code}`),
-        };
+      const parsedFindings = analyzer.parseOutput(result.stdout, absPath, command).filter((finding) => finding.filePath === "" || path.resolve(finding.filePath) === absPath);
+      findings.push(...parsedFindings);
+
+      if (result.code !== 0 && parsedFindings.length === 0) {
+        errors.push(`${analyzer.id}: ${result.stderr.trim() || (result.signal ? `analyzer exited via signal ${result.signal}` : `analyzer exited with code ${result.code}`)}`);
+        continue;
       }
-      return {
-        analyzerId: analyzer.id,
-        findings,
-        error: result.stderr.trim() || undefined,
-      };
+      if (result.stderr.trim()) errors.push(`${analyzer.id}: ${result.stderr.trim()}`);
     } catch (error) {
-      return {
-        analyzerId: analyzer.id,
-        findings: [],
-        error: error instanceof Error ? error.message : String(error),
-      };
+      errors.push(`${analyzer.id}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  return { findings: [], skipped: "unavailable" };
+  if (analyzerIds.length === 0) return { findings: [], skipped: "unavailable" };
+
+  return {
+    analyzerId: analyzerIds[0],
+    analyzerIds,
+    findings,
+    error: errors[0],
+    errors: errors.length > 0 ? errors : undefined,
+  };
 }

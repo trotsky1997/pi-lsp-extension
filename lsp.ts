@@ -99,6 +99,45 @@ const PROJECT_CONFIG_FILES = new Set([
   "Package.swift",
 ]);
 
+const SERVER_STATUS_LABELS: Record<string, string> = {
+  pyright: "py",
+  basedpyright: "py",
+  ty: "py",
+  typescript: "ts",
+  deno: "ts",
+  eslint: "ts",
+  oxlint: "ts",
+  vue: "ts",
+  svelte: "ts",
+  astro: "ts",
+  markdown: "txt",
+  texlab: "tex",
+  gopls: "go",
+  "rust-analyzer": "rs",
+  kotlin: "kt",
+  swift: "swift",
+  terraform: "tf",
+  "yaml-ls": "yaml",
+  bash: "sh",
+  clangd: "c",
+  php: "php",
+  "ruby-lsp": "rb",
+  jdtls: "java",
+  "lua-ls": "lua",
+  nixd: "nix",
+  "ocaml-lsp": "ml",
+  gleam: "gleam",
+  hls: "hs",
+  julials: "jl",
+  "clojure-lsp": "clj",
+  "elixir-ls": "ex",
+  csharp: "cs",
+  fsharp: "fs",
+  tinymist: "typ",
+  zls: "zig",
+  prisma: "prisma",
+};
+
 const DOCTOR_REPORT_RELATIVE_PATH = path.join(".pi", "lsp-doctor.md");
 const DOCTOR_MAX_FILES = 25;
 
@@ -391,32 +430,24 @@ export default function (pi: ExtensionAPI) {
   function updateLspStatus(): void {
     if (!statusUpdateFn) return;
 
-    const clients = activeClients.size > 0 ? [...activeClients].join(", ") : "";
-    const clientsText = clients ? `${DIM}${clients}${RESET}` : "";
+    const activeLabels = [...new Set(
+      [...activeClients]
+        .map((clientId) => SERVER_STATUS_LABELS[clientId] ?? clientId)
+        .filter(Boolean),
+    )];
+    const clientsText = activeLabels.length > 0 ? `${DIM}${activeLabels.join("/")}${RESET}` : "";
     const activityHint = activity === "idle" ? "" : `${DIM}•${RESET}`;
-    const providerText = pythonProvider === "pyright"
-      ? `${DIM}pyright${RESET}`
-      : `${DIM}${PYTHON_PROVIDER_LABELS[pythonProvider]}${RESET}`;
-    const formatterText = formatterEnabled && formatterHookMode !== "disabled"
-      ? `${DIM}fmt:${formatterHookMode}${RESET}`
-      : `${DIM}fmt:off${RESET}`;
-    const analyzerText = analyzerEnabled && analyzerHookMode !== "disabled"
-      ? `${DIM}an:${analyzerHookMode}${RESET}`
-      : `${DIM}an:off${RESET}`;
 
     if (hookMode === "disabled") {
       const nextText = clientsText
-        ? `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET} ${providerText} ${formatterText} ${analyzerText}: ${clientsText}`
-        : `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET} ${providerText} ${formatterText} ${analyzerText}`;
+        ? `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET} ${clientsText}`
+        : `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET}`;
       statusUpdateFn("lsp", nextText);
       return;
     }
 
     let text = `${GREEN}LSP${RESET}`;
     if (activityHint) text += ` ${activityHint}`;
-    text += ` ${providerText}`;
-    text += ` ${formatterText}`;
-    text += ` ${analyzerText}`;
     if (clientsText) text += ` ${clientsText}`;
     statusUpdateFn("lsp", text);
   }
@@ -545,6 +576,30 @@ export default function (pi: ExtensionAPI) {
       : `\nAnalyzer ${analyzerId} checked ${relativePath}; no issues.\n`;
   }
 
+  function buildMultiAnalyzerMessage(
+    cwd: string,
+    filePath: string,
+    analyzerIds: string[],
+    findingCount: number,
+    findings: Array<{ source?: string; message: string; line: number; column: number; ruleId?: string }>,
+    errors?: string[],
+  ): string {
+    const relativePath = path.relative(cwd, filePath);
+    const preview = findings.slice(0, 8).map((finding) => {
+      const source = finding.source ? `[${finding.source}] ` : "";
+      const rule = finding.ruleId ? ` [${finding.ruleId}]` : "";
+      return `- ${source}${finding.line}:${finding.column}${rule} ${finding.message}`;
+    }).join("\n");
+    const remainder = findingCount > 8 ? `\n... +${findingCount - 8} more` : "";
+    const errorBlock = errors && errors.length > 0 ? `\nErrors:\n${errors.map((error) => `- ${error}`).join("\n")}` : "";
+
+    if (findingCount === 0) {
+      return `\nAnalyzers ${analyzerIds.join(", ")} checked ${relativePath}; no issues.${errorBlock}\n`;
+    }
+
+    return `\nAnalyzers ${analyzerIds.join(", ")} found ${findingCount} issue(s) in ${relativePath}:\n${preview}${remainder}${errorBlock}\n`;
+  }
+
   async function buildDoctorReport(ctx: ExtensionContext): Promise<string> {
     const settings = loadResolvedLspSettings(ctx.cwd);
     const manager = getOrCreateManager(ctx.cwd);
@@ -654,9 +709,14 @@ export default function (pi: ExtensionAPI) {
         if (analysis.skipped) {
           lines.push(`- Analyzer status: ${analysis.skipped}`);
         } else {
-          lines.push(`- Analyzer status: ran ${analysis.analyzerId ?? "unknown"}`);
+          lines.push(`- Analyzer status: ran ${analysis.analyzerIds?.join(", ") ?? analysis.analyzerId ?? "unknown"}`);
           lines.push(`- Analyzer findings: ${analysis.findings.length}`);
-          if (analysis.error) lines.push(`- Analyzer stderr: ${analysis.error}`);
+          if (analysis.errors && analysis.errors.length > 0) {
+            lines.push(`- Analyzer errors:`);
+            for (const error of analysis.errors) lines.push(`  - ${error}`);
+          } else if (analysis.error) {
+            lines.push(`- Analyzer stderr: ${analysis.error}`);
+          }
         }
       } catch (error) {
         lines.push(`- Analyzer check error: ${error instanceof Error ? error.message : String(error)}`);
@@ -706,8 +766,8 @@ export default function (pi: ExtensionAPI) {
     ctx: ExtensionContext,
   ): Promise<string | undefined> {
     const result = await runAnalyzersForFile(filePath, ctx.cwd);
-    if (!result.analyzerId) return undefined;
-    return buildAnalyzerMessage(ctx.cwd, filePath, result.analyzerId, result.findings.length, result.findings, result.error);
+    if (!result.analyzerIds || result.analyzerIds.length === 0) return undefined;
+    return buildMultiAnalyzerMessage(ctx.cwd, filePath, result.analyzerIds, result.findings.length, result.findings, result.errors);
   }
 
   pi.registerCommand("lsp", {
@@ -940,14 +1000,14 @@ export default function (pi: ExtensionAPI) {
     let analyzerMessage: string | undefined;
     if (shouldRunAnalyzerForTool(event.toolName)) {
       const analyzed = await runAnalyzersForFile(normalizedPath, ctx.cwd);
-      if (analyzed.analyzerId) {
-        analyzerMessage = buildAnalyzerMessage(
+      if (analyzed.analyzerIds && analyzed.analyzerIds.length > 0) {
+        analyzerMessage = buildMultiAnalyzerMessage(
           ctx.cwd,
           normalizedPath,
-          analyzed.analyzerId,
+          analyzed.analyzerIds,
           analyzed.findings.length,
           analyzed.findings,
-          analyzed.error,
+          analyzed.errors,
         );
       }
     }

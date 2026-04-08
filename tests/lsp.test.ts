@@ -221,7 +221,7 @@ test("ANALYZERS: includes semgrep", async () => {
 });
 
 test("ANALYZERS: includes common linter-style analyzers", async () => {
-  const ids = ["ruff-check", "golangci-lint", "markdownlint", "shellcheck", "hadolint", "slopgrep"];
+  const ids = ["ruff-check", "golangci-lint", "markdownlint", "shellcheck", "hadolint", "slopgrep", "sloppylint", "karpeslop"];
   for (const id of ids) {
     assert(ANALYZERS.some((analyzer) => analyzer.id === id), `Should have ${id} analyzer`);
   }
@@ -1241,6 +1241,24 @@ test("analyzer matching: shellcheck matches shell files", async () => {
   });
 });
 
+test("analyzer matching: sloppylint matches python files", async () => {
+  await withTempDir({
+    "src/app.py": "print('hello')",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "src/app.py"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "sloppylint"), "sloppylint should match python files");
+  });
+});
+
+test("analyzer matching: karpeslop matches ts files", async () => {
+  await withTempDir({
+    "src/app.ts": "export const x = 1;",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "src/app.ts"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "karpeslop"), "karpeslop should match ts files");
+  });
+});
+
 test("analyzer matching: hadolint matches Dockerfile", async () => {
   await withTempDir({
     "Dockerfile": "FROM alpine:latest",
@@ -1264,6 +1282,26 @@ test("analyzer matching: project settings can disable semgrep", async () => {
   }, async (dir) => {
     const matches = getAnalyzerConfigsForFile(join(dir, "src/index.ts"), dir);
     assert(!matches.some((analyzer) => analyzer.id === "semgrep"), "semgrep should be excluded when disabled in settings");
+  });
+});
+
+test("analyzer matching: multiple analyzers can match one python file", async () => {
+  await withTempDir({
+    "src/app.py": "print('hello')",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "src/app.py"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "ruff-check"), "ruff-check should match python files");
+    assert(matches.some((analyzer) => analyzer.id === "sloppylint"), "sloppylint should also match python files");
+  });
+});
+
+test("analyzer matching: multiple analyzers can match one ts file", async () => {
+  await withTempDir({
+    "src/app.ts": "export const x = 1;",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "src/app.ts"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "semgrep"), "semgrep should match ts files");
+    assert(matches.some((analyzer) => analyzer.id === "karpeslop"), "karpeslop should also match ts files");
   });
 });
 

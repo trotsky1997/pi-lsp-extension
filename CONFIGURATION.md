@@ -113,6 +113,7 @@ Each entry under `lsp.servers.<serverId>` supports:
 - `analyzers: Record<string, AnalyzerSettings>`
 
 `tools` and `analyzers` are both accepted; they resolve to the same internal registry.
+More than one analyzer can match the same file, and matching analyzers run together.
 
 ## Per-formatter keys
 
@@ -212,9 +213,11 @@ Each entry under `analyzer.tools.<analyzerId>` or `analyzer.analyzers.<analyzerI
 
 - `golangci-lint`
 - `hadolint`
+- `karpeslop`
 - `markdownlint`
 - `ruff-check`
 - `semgrep`
+- `sloppylint`
 - `slopgrep`
 - `shellcheck`
 
@@ -331,6 +334,8 @@ Global and project settings are merged with these rules:
 - `shellcheck` for shell scripts
 - `hadolint` for `Dockerfile`
 - `slopgrep` for Markdown, prose-heavy text files, and LaTeX prose
+- `sloppylint` for Python AI-generated-code anti-patterns
+- `karpeslop` for TypeScript / JavaScript / React AI-slop detection
 
 ## Notes
 

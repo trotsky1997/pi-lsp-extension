@@ -148,13 +148,16 @@ Built-in analyzer IDs:
 
 - `golangci-lint`
 - `hadolint`
+- `karpeslop`
 - `markdownlint`
 - `ruff-check`
 - `semgrep`
 - `slopgrep`
+- `sloppylint`
 - `shellcheck`
 
 Analyzers are for extra diagnostics, not LSP features and not file rewriting.
+Multiple analyzers can match and run for the same file.
 
 ## Install the tools you want
 
@@ -163,6 +166,7 @@ Typical install commands:
 ```bash
 # Core JS / TS / Markdown
 npm i -g typescript-language-server typescript prettier @biomejs/biome
+npm i -g karpeslop
 npm i -g rumdl @semgrep/cli markdownlint-cli
 npm i -g vscode-langservers-extracted   # eslint, html, css, json
 npm i -g yaml-language-server bash-language-server
@@ -175,6 +179,7 @@ npm i -g @prisma/language-server
 # Python
 npm i -g pyright basedpyright
 uv tool install ty ruff
+pip install sloppylint
 
 # Go / Rust / Zig / Typst
 go install golang.org/x/tools/gopls@latest
@@ -222,7 +227,9 @@ Notes:
 - `rumdl` provides both the Markdown LSP (`rumdl server`) and formatter (`rumdl fmt`).
 - `semgrep` is an analyzer, not an LSP or formatter.
 - `slopgrep` is useful for prose-heavy repositories and AI-writing-tell scanning in Markdown, text, or LaTeX files.
-- Common analyzer-style tools bundled today are `semgrep`, `ruff check`, `golangci-lint run`, `markdownlint`, `shellcheck`, `hadolint`, and `slopgrep`.
+- `sloppylint` focuses on Python AI-code anti-patterns.
+- `karpeslop` focuses on TypeScript / JavaScript / React AI-slop detection.
+- Common analyzer-style tools bundled today are `semgrep`, `ruff check`, `golangci-lint run`, `markdownlint`, `shellcheck`, `hadolint`, `slopgrep`, `sloppylint`, and `karpeslop`.
 - Package names vary by OS and package manager; the important part is that the expected executable is on `PATH`.
 
 ## Commands

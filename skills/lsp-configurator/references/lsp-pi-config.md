@@ -106,16 +106,20 @@ Common keys:
 - `semgrep`
 - `ruff-check`
 - `golangci-lint`
+- `karpeslop`
 - `markdownlint`
 - `shellcheck`
 - `hadolint`
 - `slopgrep`
+- `sloppylint`
 
 ## Good default mappings
 
 - TypeScript / JavaScript: `typescript`, formatter `biome` or `prettier`, analyzer `semgrep`
+- TypeScript / JavaScript AI-slop scans: optionally add analyzer `karpeslop`
 - Deno: `deno`
 - Python: provider `basedpyright` or `ty`, formatter `ruff`, analyzer `ruff-check`
+- Python AI-code-quality scans: optionally add analyzer `sloppylint`
 - Go: `gopls`, formatter `gofmt`, analyzer `golangci-lint`
 - Rust: `rust-analyzer`, formatter `rustfmt`
 - Markdown: `markdown`, formatter `rumdl`, analyzer `markdownlint`

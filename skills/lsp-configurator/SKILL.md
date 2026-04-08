@@ -13,7 +13,7 @@ Produce a working `lsp-pi` configuration for the user's stack across these three
 
 - `lsp` for language servers
 - `formatter` for format-on-write tools
-- `analyzer` for non-LSP diagnostics such as `semgrep`, `ruff-check`, `golangci-lint`, `markdownlint`, `shellcheck`, `hadolint`, and `slopgrep`
+- `analyzer` for non-LSP diagnostics such as `semgrep`, `ruff-check`, `golangci-lint`, `markdownlint`, `shellcheck`, `hadolint`, `slopgrep`, `sloppylint`, and `karpeslop`
 
 Because `lsp-pi` is config-first, do not route configuration through `/lsp`. `/lsp` is status/help only.
 
@@ -60,7 +60,7 @@ If `package.json` or TS config files exist, usually propose:
 
 - LSP: `typescript`
 - Formatter: `biome` if `biome.json` / `biome.jsonc` exists, otherwise `prettier`
-- Analyzer: `semgrep` by default, optionally `markdownlint` for Markdown-heavy repos
+- Analyzer: `semgrep` by default, optionally `karpeslop` for TS/JS AI-slop detection and `markdownlint` for Markdown-heavy repos
 
 If `deno.json` or `deno.jsonc` exists, prefer `deno` over `typescript`.
 
@@ -70,7 +70,7 @@ If Python files or `pyproject.toml` exist, propose:
 
 - LSP: `lsp.python.provider`
 - Formatter: `ruff` if available, otherwise leave formatter unset unless the user asks
-- Analyzer: `ruff-check`, optionally `semgrep`
+- Analyzer: `ruff-check`, optionally `semgrep`, and optionally `sloppylint` for Python AI-code anti-pattern detection
 
 Provider suggestions:
 
