@@ -167,9 +167,10 @@ Typical install commands:
 # Core JS / TS / Markdown
 npm i -g typescript-language-server typescript prettier @biomejs/biome
 npm i -g karpeslop
-npm i -g rumdl @semgrep/cli markdownlint-cli
+npm i -g rumdl markdownlint-cli
 npm i -g vscode-langservers-extracted   # eslint, html, css, json
 npm i -g yaml-language-server bash-language-server
+uv tool install semgrep
 uv tool install git+https://github.com/trotsky1997/slopgrep.git
 
 # Vue / Svelte / Astro / Prisma
