@@ -221,7 +221,7 @@ Notes:
 - `sourcekit-lsp`, `dart format`, `mix format`, `gofmt`, and `rustfmt` often come from their main toolchains.
 - `rumdl` provides both the Markdown LSP (`rumdl server`) and formatter (`rumdl fmt`).
 - `semgrep` is an analyzer, not an LSP or formatter.
-- `slopgrep` is useful for prose-heavy repositories and AI-writing-tell scanning in Markdown or text files.
+- `slopgrep` is useful for prose-heavy repositories and AI-writing-tell scanning in Markdown, text, or LaTeX files.
 - Common analyzer-style tools bundled today are `semgrep`, `ruff check`, `golangci-lint run`, `markdownlint`, `shellcheck`, `hadolint`, and `slopgrep`.
 - Package names vary by OS and package manager; the important part is that the expected executable is on `PATH`.
 

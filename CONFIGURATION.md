@@ -330,7 +330,7 @@ Global and project settings are merged with these rules:
 - `markdownlint` for Markdown
 - `shellcheck` for shell scripts
 - `hadolint` for `Dockerfile`
-- `slopgrep` for Markdown and prose-heavy text files
+- `slopgrep` for Markdown, prose-heavy text files, and LaTeX prose
 
 ## Notes
 

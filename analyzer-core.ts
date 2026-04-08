@@ -375,7 +375,7 @@ export const ANALYZERS: AnalyzerConfig[] = [
   ),
   directBinaryAnalyzer(
     "slopgrep",
-    [".md", ".mdx", ".txt", ".rst", ".adoc"],
+    [".md", ".mdx", ".txt", ".rst", ".adoc", ".tex"],
     "slopgrep",
     (file) => ["scan", "--json", file],
     parseSlopgrepOutput,

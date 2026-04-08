@@ -1223,6 +1223,15 @@ test("analyzer matching: slopgrep matches prose files", async () => {
   });
 });
 
+test("analyzer matching: slopgrep matches tex files", async () => {
+  await withTempDir({
+    "paper/main.tex": "\\section{Intro}",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "paper/main.tex"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "slopgrep"), "slopgrep should match tex files");
+  });
+});
+
 test("analyzer matching: shellcheck matches shell files", async () => {
   await withTempDir({
     "script.sh": "echo hi",

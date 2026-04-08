@@ -102,6 +102,13 @@ If many `.md` / `.mdx` files exist, propose:
 - Formatter: `rumdl`
 - Analyzer: `markdownlint`, and optionally `slopgrep` for prose-quality / AI-writing-tell scanning
 
+### LaTeX / academic writing
+
+If `.tex` files are present, propose:
+
+- LSP: `texlab`
+- Analyzer: optionally `slopgrep` when the user wants prose / AI-writing-tell scanning in TeX content
+
 ### Shell / Docker / IaC
 
 - Shell files: analyzer `shellcheck`, formatter `shfmt`

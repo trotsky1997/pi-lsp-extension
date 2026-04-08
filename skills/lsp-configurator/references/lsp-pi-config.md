@@ -120,6 +120,7 @@ Common keys:
 - Rust: `rust-analyzer`, formatter `rustfmt`
 - Markdown: `markdown`, formatter `rumdl`, analyzer `markdownlint`
 - Markdown / prose-heavy docs: optionally add analyzer `slopgrep`
+- LaTeX: `texlab`, and optionally analyzer `slopgrep`
 - Shell: formatter `shfmt`, analyzer `shellcheck`
 - Dockerfile: analyzer `hadolint`
 - Terraform: `terraform`, formatter `terraform`
