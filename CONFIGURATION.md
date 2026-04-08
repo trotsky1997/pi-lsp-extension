@@ -1,24 +1,24 @@
 # lsp-pi Configuration
 
-This document describes the configurable LSP server settings supported by `lsp-pi`.
+`lsp-pi` is configured entirely through Pi settings files.
 
-## Settings Files
-
-`lsp-pi` reads settings from two standard Pi locations:
+## Settings files
 
 - Global: `~/.pi/agent/settings.json`
 - Project: `.pi/settings.json`
 
 Project settings override global settings.
 
-## Settings Shape
-
-Put all `lsp-pi` settings under the top-level `lsp` key.
+## Settings shape
 
 ```json
 {
   "lsp": {
+    "enabled": true,
     "hookMode": "agent_end",
+    "python": {
+      "provider": "basedpyright"
+    },
     "servers": {
       "typescript": {
         "command": "typescript-language-server",
@@ -41,92 +41,165 @@ Put all `lsp-pi` settings under the top-level `lsp` key.
         }
       }
     }
+  },
+  "formatter": {
+    "enabled": true,
+    "hookMode": "write",
+    "formatters": {
+      "biome": {
+        "disabled": false
+      },
+      "prettier": {
+        "disabled": true
+      },
+      "ruff": {
+        "command": "ruff",
+        "args": ["format", "src/app.py"]
+      }
+    }
   }
 }
 ```
 
-## Supported Keys
+## Top-level `lsp` keys
 
-Each entry under `lsp.servers.<serverId>` supports these keys:
+- `enabled: boolean`
+- `hookMode: "edit_write" | "agent_end" | "disabled"`
+- `python.provider: "pyright" | "basedpyright" | "ty"`
+- `servers: Record<string, LSPServerSettings>`
+
+`lsp.python.provider` selects which Python server handles `.py` and `.pyi` files.
+
+## Per-server keys
+
+Each entry under `lsp.servers.<serverId>` supports:
 
 - `disabled: boolean`
-  - Disable this server entirely.
 - `command: string`
-  - Override the executable used to launch the language server.
 - `args: string[]`
-  - Override the argument list passed to the command.
-  - If omitted, `lsp-pi` uses the server's built-in default arguments.
 - `env: Record<string, string>`
-  - Extra environment variables merged into the child process environment.
 - `rootMarkers: string[]`
-  - Override the file markers used for root detection.
-  - When provided, these replace the built-in root detection markers for that server.
 - `initializationOptions: object`
-  - Sent as LSP `initialize.initializationOptions`.
 - `workspaceConfiguration: object`
-  - Returned for `workspace/configuration` requests and sent once via `workspace/didChangeConfiguration` after initialization.
 
-## Supported Server IDs
+## Top-level `formatter` keys
 
-Current built-in server IDs:
+- `enabled: boolean`
+- `hookMode: "write" | "edit_write" | "disabled"`
+- `formatters: Record<string, FormatterSettings>`
 
+## Per-formatter keys
+
+Each entry under `formatter.formatters.<formatterId>` supports:
+
+- `disabled: boolean`
+- `command: string`
+- `args: string[]`
+- `env: Record<string, string>`
+- `environment: Record<string, string>`
+- `extensions: string[]`
+- `rootMarkers: string[]`
+
+`environment` is accepted for OpenCode-style compatibility. If both `env` and `environment` are present, both are merged.
+
+## Built-in server IDs
+
+- `astro`
+- `bash`
+- `clangd`
+- `csharp`
+- `clojure-lsp`
 - `dart`
+- `deno`
+- `elixir-ls`
+- `eslint`
+- `fsharp`
+- `gleam`
+- `gopls`
+- `hls`
+- `jdtls`
+- `julials`
+- `kotlin`
+- `lua-ls`
+- `nixd`
+- `ocaml-lsp`
+- `oxlint`
+- `php`
+- `prisma`
+- `pyright`
+- `basedpyright`
+- `ty`
+- `ruby-lsp`
+- `rust-analyzer`
+- `svelte`
+- `swift`
+- `terraform`
+- `tinymist`
 - `typescript`
 - `vue`
-- `svelte`
-- `pyright`
-- `gopls`
-- `kotlin`
-- `swift`
-- `rust-analyzer`
+- `yaml-ls`
+- `zls`
 
-These IDs match the internal server registry, not always the upstream executable name.
+## Built-in formatter IDs
 
-## Merge Rules
+- `air`
+- `biome`
+- `clang-format`
+- `cljfmt`
+- `dart`
+- `dfmt`
+- `gleam`
+- `gofmt`
+- `htmlbeautifier`
+- `ktlint`
+- `mix`
+- `nixfmt`
+- `ocamlformat`
+- `ormolu`
+- `pint`
+- `prettier`
+- `ruff`
+- `rubocop`
+- `rustfmt`
+- `shfmt`
+- `standardrb`
+- `terraform`
+- `uv`
+- `zig`
+
+## Merge rules
 
 Global and project settings are merged with these rules:
 
-- Scalars such as `command` and `disabled` are overridden by project settings.
-- Arrays such as `args` and `rootMarkers` are replaced by project settings.
-- Objects such as `env`, `initializationOptions`, and `workspaceConfiguration` are deep-merged.
-
-Example:
-
-- Global sets `env.GLOBAL_FLAG=1`
-- Project sets `env.PROJECT_FLAG=1`
-- Effective config contains both flags
-
-## Runtime Behavior
-
-### Startup
-
-When `lsp-pi` starts a server, it:
-
-1. Resolves the effective server settings from global + project settings.
-2. Uses the effective `rootMarkers` if provided.
-3. Uses the effective `command` / `args` / `env` if provided.
-4. Sends `initializationOptions` in the `initialize` request.
-5. Exposes `workspaceConfiguration` through `workspace/configuration` and `workspace/didChangeConfiguration`.
-
-### File changes
-
-When Pi performs `write` or `edit`:
-
-- `lsp-pi` sends `workspace/didChangeWatchedFiles` to active matching servers.
-- If the changed file is a project config file or LSP settings file, active servers for affected roots are restarted.
-
-This lets servers reload settings such as `tsconfig.json`, `pyproject.toml`, `Cargo.toml`, or `.pi/settings.json` without requiring a full Pi restart.
+- scalars such as `command`, `disabled`, `hookMode`, and `provider` are overridden by project settings
+- arrays such as `args`, `rootMarkers`, and `extensions` are replaced by project settings
+- objects such as `env`, `environment`, `initializationOptions`, and `workspaceConfiguration` are deep-merged
 
 ## Examples
 
-### Use a custom Pyright binary
+### Select Ty for Python
 
 ```json
 {
   "lsp": {
+    "python": {
+      "provider": "ty"
+    }
+  }
+}
+```
+
+### Override the BasedPyright binary
+
+```json
+{
+  "lsp": {
+    "python": {
+      "provider": "basedpyright"
+    },
     "servers": {
-      "pyright": {
-        "command": "/opt/pyright/bin/pyright-langserver",
+      "basedpyright": {
+        "command": "/opt/basedpyright/bin/basedpyright-langserver",
         "args": ["--stdio"]
       }
     }
@@ -134,13 +207,17 @@ This lets servers reload settings such as `tsconfig.json`, `pyproject.toml`, `Ca
 }
 ```
 
-### Disable Rust temporarily
+### Prefer Biome and disable Prettier
 
 ```json
 {
-  "lsp": {
-    "servers": {
-      "rust-analyzer": {
+  "formatter": {
+    "hookMode": "write",
+    "formatters": {
+      "biome": {
+        "disabled": false
+      },
+      "prettier": {
         "disabled": true
       }
     }
@@ -148,28 +225,22 @@ This lets servers reload settings such as `tsconfig.json`, `pyproject.toml`, `Ca
 }
 ```
 
-### Add custom TypeScript workspace configuration
+### Use a custom Ruff command
 
 ```json
 {
-  "lsp": {
-    "servers": {
-      "typescript": {
-        "workspaceConfiguration": {
-          "typescript": {
-            "format": {
-              "insertSpaceAfterCommaDelimiter": true,
-              "semicolons": "remove"
-            }
-          }
-        }
+  "formatter": {
+    "formatters": {
+      "ruff": {
+        "command": "/opt/ruff/bin/ruff",
+        "args": ["format", "src/app.py"]
       }
     }
   }
 }
 ```
 
-### Override root detection in a monorepo
+### Override TypeScript root detection in a monorepo
 
 ```json
 {
@@ -183,10 +254,10 @@ This lets servers reload settings such as `tsconfig.json`, `pyproject.toml`, `Ca
 }
 ```
 
-## Notes and Limitations
+## Notes
 
-- Settings only affect servers started by `lsp-pi`.
-- Project-local `.pi/settings.json` is the recommended place for repository-specific overrides.
-- Global settings are best for personal executable paths or personal defaults.
-- Invalid or malformed LSP settings are ignored rather than crashing the extension.
-- Some upstream servers may ignore parts of `initializationOptions` or `workspaceConfiguration`; support depends on the server implementation.
+- `/lsp` is a status/help command only; it does not write configuration.
+- `/lsp doctor` writes a local report to `.pi/lsp-doctor.md` in the current workspace.
+- Invalid or malformed settings are ignored instead of crashing the extension.
+- `lsp-pi` does not auto-install language servers or formatters.
+- Formatter execution is best-effort and only runs when a matching configured or built-in binary is available.

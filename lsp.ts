@@ -17,10 +17,16 @@ import * as os from "node:os";
 import { type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { FileChangeType, type Diagnostic } from "vscode-languageserver-protocol";
-import { LSP_SERVERS, formatDiagnostic, getOrCreateManager, shutdownManager } from "./lsp-core.js";
+import { getFormatterConfigsForFile, runFormatterForFile } from "./formatter-core.js";
+import { formatDiagnostic, getOrCreateManager, getServerConfigsForFile, shutdownManager } from "./lsp-core.js";
+import { loadResolvedLspSettings, type FormatterHookMode, type HookMode, type PythonProvider } from "./lsp-settings.js";
 
-type HookScope = "session" | "global";
-type HookMode = "edit_write" | "agent_end" | "disabled";
+type HookScope = "session" | "global" | "project";
+
+const PYTHON_PROVIDER_LABELS: Record<Exclude<PythonProvider, "pyright">, string> = {
+  basedpyright: "BasedPyright",
+  ty: "Ty",
+};
 
 const DIAGNOSTICS_WAIT_MS_DEFAULT = 3000;
 
@@ -35,6 +41,8 @@ const DIAGNOSTICS_PREVIEW_LINES = 10;
 const LSP_IDLE_SHUTDOWN_MS = 2 * 60 * 1000;
 const DIM = "\x1b[2m", GREEN = "\x1b[32m", YELLOW = "\x1b[33m", RESET = "\x1b[0m";
 const DEFAULT_HOOK_MODE: HookMode = "agent_end";
+const DEFAULT_PYTHON_PROVIDER: PythonProvider = "pyright";
+const DEFAULT_FORMATTER_HOOK_MODE: FormatterHookMode = "write";
 const SETTINGS_NAMESPACE = "lsp";
 const LSP_CONFIG_ENTRY = "lsp-hook-config";
 
@@ -42,6 +50,7 @@ const WARMUP_MAP: Record<string, string> = {
   "pubspec.yaml": ".dart",
   "package.json": ".ts",
   "pyproject.toml": ".py",
+  "ty.toml": ".py",
   "go.mod": ".go",
   "Cargo.toml": ".rs",
   "settings.gradle": ".kt",
@@ -73,6 +82,8 @@ const PROJECT_CONFIG_FILES = new Set([
   "setup.py",
   "requirements.txt",
   "pyrightconfig.json",
+  "basedpyrightconfig.json",
+  "ty.toml",
   "go.mod",
   "go.work",
   "Cargo.toml",
@@ -86,15 +97,166 @@ const PROJECT_CONFIG_FILES = new Set([
   "Package.swift",
 ]);
 
+const DOCTOR_REPORT_RELATIVE_PATH = path.join(".pi", "lsp-doctor.md");
+const DOCTOR_MAX_FILES = 25;
+
 function normalizeHookMode(value: unknown): HookMode | undefined {
   if (value === "edit_write" || value === "agent_end" || value === "disabled") return value;
   if (value === "turn_end") return "agent_end";
   return undefined;
 }
 
-interface HookConfigEntry {
+function normalizePythonProvider(value: unknown): PythonProvider | undefined {
+  if (value === "pyright" || value === "basedpyright" || value === "ty") return value;
+  return undefined;
+}
+
+function walkFiles(root: string, maxFiles: number): string[] {
+  const results: string[] = [];
+  const stack = [root];
+  const ignoredDirs = new Set([".git", "node_modules", ".next", "dist", "build", "coverage", ".turbo"]);
+
+  while (stack.length > 0 && results.length < maxFiles) {
+    const current = stack.pop();
+    if (!current) continue;
+
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (results.length >= maxFiles) break;
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        if (!ignoredDirs.has(entry.name)) stack.push(fullPath);
+        continue;
+      }
+      if (entry.isFile()) results.push(fullPath);
+    }
+  }
+
+  return results.sort();
+}
+
+async function writeDoctorReportFile(cwd: string, content: string): Promise<string> {
+  const reportPath = path.join(cwd, DOCTOR_REPORT_RELATIVE_PATH);
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+  fs.writeFileSync(reportPath, content, "utf-8");
+  return reportPath;
+}
+
+export interface LspConfigEntry {
   scope: HookScope;
   hookMode?: HookMode;
+  pythonProvider?: PythonProvider;
+}
+
+interface LspResolvedUiState {
+  hookMode: HookMode;
+  hookScope: HookScope;
+  pythonProvider: PythonProvider;
+  pythonScope: HookScope;
+  formatterEnabled: boolean;
+  formatterHookMode: FormatterHookMode;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function readSettingsFile(filePath: string): Record<string, unknown> {
+  try {
+    if (!fs.existsSync(filePath)) return {};
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function getScopedSettingOrigin(globalValue: unknown, projectValue: unknown): HookScope {
+  return projectValue !== undefined ? "project" : globalValue !== undefined ? "global" : "global";
+}
+
+export function resolveLspUiState(
+  cwd: string,
+  sessionEntry?: LspConfigEntry,
+  globalSettingsPath = path.join(os.homedir(), ".pi", "agent", "settings.json"),
+): LspResolvedUiState {
+  const resolved = loadResolvedLspSettings(cwd, {
+    globalSettingsPath,
+    projectSettingsPath: path.join(cwd, ".pi", "settings.json"),
+  });
+  const globalSettings = readSettingsFile(globalSettingsPath);
+  const projectSettings = readSettingsFile(path.join(cwd, ".pi", "settings.json"));
+
+  const globalLsp = isPlainObject(globalSettings[SETTINGS_NAMESPACE]) ? globalSettings[SETTINGS_NAMESPACE] : undefined;
+  const projectLsp = isPlainObject(projectSettings[SETTINGS_NAMESPACE]) ? projectSettings[SETTINGS_NAMESPACE] : undefined;
+  const globalHookMode = normalizeHookMode((globalLsp as { hookMode?: unknown } | undefined)?.hookMode)
+    ?? (typeof (globalLsp as { hookEnabled?: unknown } | undefined)?.hookEnabled === "boolean"
+      ? ((globalLsp as { hookEnabled?: boolean }).hookEnabled ? "edit_write" : "disabled")
+      : undefined);
+  const projectHookMode = normalizeHookMode((projectLsp as { hookMode?: unknown } | undefined)?.hookMode)
+    ?? (typeof (projectLsp as { hookEnabled?: unknown } | undefined)?.hookEnabled === "boolean"
+      ? ((projectLsp as { hookEnabled?: boolean }).hookEnabled ? "edit_write" : "disabled")
+      : undefined);
+  const globalProvider = normalizePythonProvider((globalLsp as { python?: { provider?: unknown } } | undefined)?.python?.provider);
+  const projectProvider = normalizePythonProvider((projectLsp as { python?: { provider?: unknown } } | undefined)?.python?.provider);
+
+  const diskHookMode = resolved.hookMode ?? DEFAULT_HOOK_MODE;
+  const diskPythonProvider = resolved.pythonProvider ?? DEFAULT_PYTHON_PROVIDER;
+  const effectiveHookMode = resolved.enabled ? diskHookMode : "disabled";
+  const hookScope = getScopedSettingOrigin(globalHookMode, projectHookMode);
+  const pythonScope = getScopedSettingOrigin(globalProvider, projectProvider);
+
+  if (sessionEntry?.scope === "session") {
+    return {
+      hookMode: normalizeHookMode(sessionEntry.hookMode) ?? effectiveHookMode,
+      hookScope: "session",
+      pythonProvider: normalizePythonProvider(sessionEntry.pythonProvider) ?? diskPythonProvider,
+      pythonScope: "session",
+      formatterEnabled: resolved.formatterEnabled,
+      formatterHookMode: resolved.formatterHookMode ?? DEFAULT_FORMATTER_HOOK_MODE,
+    };
+  }
+
+  return {
+    hookMode: effectiveHookMode,
+    hookScope: sessionEntry?.scope === "project" ? "project" : hookScope,
+    pythonProvider: diskPythonProvider,
+    pythonScope: sessionEntry?.scope === "project" ? "project" : pythonScope,
+    formatterEnabled: resolved.formatterEnabled,
+    formatterHookMode: resolved.formatterHookMode ?? DEFAULT_FORMATTER_HOOK_MODE,
+  };
+}
+
+function updateScopedLspSettings(filePath: string, hookMode: HookMode, pythonProvider: PythonProvider): boolean {
+  try {
+    const settings = readSettingsFile(filePath);
+    const existingNamespace = isPlainObject(settings[SETTINGS_NAMESPACE]) ? settings[SETTINGS_NAMESPACE] : {};
+    const existingPython = isPlainObject((existingNamespace as Record<string, unknown>).python)
+      ? (existingNamespace as Record<string, unknown>).python as Record<string, unknown>
+      : {};
+
+    settings[SETTINGS_NAMESPACE] = {
+      ...existingNamespace,
+      hookMode,
+      python: {
+        ...existingPython,
+        provider: pythonProvider,
+      },
+    };
+
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(settings, null, 2), "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export default function (pi: ExtensionAPI) {
@@ -103,7 +265,11 @@ export default function (pi: ExtensionAPI) {
   let activeClients: Set<string> = new Set();
   let statusUpdateFn: ((key: string, text: string | undefined) => void) | null = null;
   let hookMode: HookMode = DEFAULT_HOOK_MODE;
+  let pythonProvider: PythonProvider = DEFAULT_PYTHON_PROVIDER;
   let hookScope: HookScope = "global";
+  let pythonScope: HookScope = "global";
+  let formatterEnabled = true;
+  let formatterHookMode: FormatterHookMode = DEFAULT_FORMATTER_HOOK_MODE;
   let activity: LspActivity = "idle";
   let diagnosticsAbort: AbortController | null = null;
   let shuttingDown = false;
@@ -125,53 +291,13 @@ export default function (pi: ExtensionAPI) {
       || PROJECT_CONFIG_FILES.has(path.basename(normalizedPath));
   }
 
-  function readSettingsFile(filePath: string): Record<string, unknown> {
-    try {
-      if (!fs.existsSync(filePath)) return {};
-      const raw = fs.readFileSync(filePath, "utf-8");
-      const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
-    } catch {
-      return {};
-    }
-  }
-
-  function getGlobalHookMode(): HookMode | undefined {
-    const settings = readSettingsFile(globalSettingsPath);
-    const lspSettings = settings[SETTINGS_NAMESPACE];
-    const hookValue = (lspSettings as { hookMode?: unknown; hookEnabled?: unknown } | undefined)?.hookMode;
-    const normalized = normalizeHookMode(hookValue);
-    if (normalized) return normalized;
-
-    const legacyEnabled = (lspSettings as { hookEnabled?: unknown } | undefined)?.hookEnabled;
-    if (typeof legacyEnabled === "boolean") return legacyEnabled ? "edit_write" : "disabled";
-    return undefined;
-  }
-
-  function setGlobalHookMode(mode: HookMode): boolean {
-    try {
-      const settings = readSettingsFile(globalSettingsPath);
-      const existing = settings[SETTINGS_NAMESPACE];
-      const nextNamespace = (existing && typeof existing === "object")
-        ? { ...(existing as Record<string, unknown>), hookMode: mode }
-        : { hookMode: mode };
-
-      settings[SETTINGS_NAMESPACE] = nextNamespace;
-      fs.mkdirSync(path.dirname(globalSettingsPath), { recursive: true });
-      fs.writeFileSync(globalSettingsPath, JSON.stringify(settings, null, 2), "utf-8");
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function getLastHookEntry(ctx: ExtensionContext): HookConfigEntry | undefined {
+  function getLastHookEntry(ctx: ExtensionContext): LspConfigEntry | undefined {
     const branchEntries = ctx.sessionManager.getBranch();
-    let latest: HookConfigEntry | undefined;
+    let latest: LspConfigEntry | undefined;
 
     for (const entry of branchEntries) {
       if (entry.type === "custom" && entry.customType === LSP_CONFIG_ENTRY) {
-        latest = entry.data as HookConfigEntry | undefined;
+        latest = entry.data as LspConfigEntry | undefined;
       }
     }
 
@@ -179,30 +305,17 @@ export default function (pi: ExtensionAPI) {
   }
 
   function restoreHookState(ctx: ExtensionContext): void {
-    const entry = getLastHookEntry(ctx);
-    if (entry?.scope === "session") {
-      const normalized = normalizeHookMode(entry.hookMode);
-      if (normalized) {
-        hookMode = normalized;
-        hookScope = "session";
-        return;
-      }
-
-      const legacyEnabled = (entry as { hookEnabled?: unknown }).hookEnabled;
-      if (typeof legacyEnabled === "boolean") {
-        hookMode = legacyEnabled ? "edit_write" : "disabled";
-        hookScope = "session";
-        return;
-      }
-    }
-
-    const globalSetting = getGlobalHookMode();
-    hookMode = globalSetting ?? DEFAULT_HOOK_MODE;
-    hookScope = "global";
+    const resolved = resolveLspUiState(ctx.cwd, undefined, globalSettingsPath);
+    hookMode = resolved.hookMode;
+    hookScope = resolved.hookScope;
+    pythonProvider = resolved.pythonProvider;
+    pythonScope = resolved.pythonScope;
+    formatterEnabled = resolved.formatterEnabled;
+    formatterHookMode = resolved.formatterHookMode;
   }
 
-  function persistHookEntry(entry: HookConfigEntry): void {
-    pi.appendEntry<HookConfigEntry>(LSP_CONFIG_ENTRY, entry);
+  function persistHookEntry(entry: LspConfigEntry): void {
+    pi.appendEntry<LspConfigEntry>(LSP_CONFIG_ENTRY, entry);
   }
 
   function labelForMode(mode: HookMode): string {
@@ -269,17 +382,25 @@ export default function (pi: ExtensionAPI) {
     const clients = activeClients.size > 0 ? [...activeClients].join(", ") : "";
     const clientsText = clients ? `${DIM}${clients}${RESET}` : "";
     const activityHint = activity === "idle" ? "" : `${DIM}•${RESET}`;
+    const providerText = pythonProvider === "pyright"
+      ? `${DIM}pyright${RESET}`
+      : `${DIM}${PYTHON_PROVIDER_LABELS[pythonProvider]}${RESET}`;
+    const formatterText = formatterEnabled && formatterHookMode !== "disabled"
+      ? `${DIM}fmt:${formatterHookMode}${RESET}`
+      : `${DIM}fmt:off${RESET}`;
 
     if (hookMode === "disabled") {
       const text = clientsText
-        ? `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET}: ${clientsText}`
-        : `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET}`;
+        ? `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET} ${providerText} ${formatterText}: ${clientsText}`
+        : `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET} ${providerText} ${formatterText}`;
       statusUpdateFn("lsp", text);
       return;
     }
 
     let text = `${GREEN}LSP${RESET}`;
     if (activityHint) text += ` ${activityHint}`;
+    text += ` ${providerText}`;
+    text += ` ${formatterText}`;
     if (clientsText) text += ` ${clientsText}`;
     statusUpdateFn("lsp", text);
   }
@@ -310,14 +431,17 @@ export default function (pi: ExtensionAPI) {
     return new Text(styledLines.join("\n"), 0, 0);
   });
 
-  function getServerConfig(filePath: string) {
-    const ext = path.extname(filePath);
-    return LSP_SERVERS.find((s) => s.extensions.includes(ext));
+  function getServerConfig(filePath: string, cwd: string) {
+    const settings = loadResolvedLspSettings(cwd);
+    return getServerConfigsForFile(filePath, cwd, settings).find((config) => {
+      const overrides = settings.servers[config.id] ?? {};
+      return !!config.findRoot(filePath, cwd, overrides);
+    }) ?? getServerConfigsForFile(filePath, cwd, settings)[0];
   }
 
   function ensureActiveClientForFile(filePath: string, cwd: string): string | undefined {
     const absPath = normalizeFilePath(filePath, cwd);
-    const cfg = getServerConfig(absPath);
+    const cfg = getServerConfig(absPath, cwd);
     if (!cfg) return undefined;
 
     if (!activeClients.has(cfg.id)) {
@@ -372,6 +496,116 @@ export default function (pi: ExtensionAPI) {
     return { notification, errorCount, output };
   }
 
+  function shouldRunFormatterForTool(toolName: string): boolean {
+    if (!formatterEnabled || formatterHookMode === "disabled") return false;
+    if (formatterHookMode === "write") return toolName === "write";
+    return toolName === "write" || toolName === "edit";
+  }
+
+  function buildFormatterMessage(cwd: string, filePath: string, formatterId: string, changed: boolean, error?: string): string {
+    const relativePath = path.relative(cwd, filePath);
+    if (error) return `\nFormatter ${formatterId} failed for ${relativePath}: ${error}\n`;
+    return changed
+      ? `\nFormatted ${relativePath} with ${formatterId}.\n`
+      : `\nFormatter ${formatterId} checked ${relativePath}; no changes.\n`;
+  }
+
+  async function buildDoctorReport(ctx: ExtensionContext): Promise<string> {
+    const settings = loadResolvedLspSettings(ctx.cwd);
+    const manager = getOrCreateManager(ctx.cwd);
+    const files = walkFiles(ctx.cwd, DOCTOR_MAX_FILES);
+    const supportedFiles = files.filter((filePath) => getServerConfigsForFile(filePath, ctx.cwd, settings).length > 0);
+
+    const lines: string[] = [
+      "# LSP Doctor Report",
+      "",
+      `- Generated: ${new Date().toISOString()}`,
+      `- Workspace: ${ctx.cwd}`,
+      `- Global config: ${settings.globalSettingsPath}`,
+      `- Project config: ${settings.projectSettingsPath}`,
+      `- LSP enabled: ${settings.enabled}`,
+      `- LSP hook mode: ${settings.hookMode ?? DEFAULT_HOOK_MODE}`,
+      `- Python provider: ${settings.pythonProvider}`,
+      `- Formatter enabled: ${settings.formatterEnabled}`,
+      `- Formatter hook mode: ${settings.formatterHookMode}`,
+      "",
+      "## Configured server overrides",
+      "",
+    ];
+
+    const serverOverrideIds = Object.keys(settings.servers).sort();
+    if (serverOverrideIds.length === 0) {
+      lines.push("- None");
+    } else {
+      for (const id of serverOverrideIds) {
+        lines.push(`- ${id}: ${JSON.stringify(settings.servers[id])}`);
+      }
+    }
+
+    lines.push("", "## Configured formatter overrides", "");
+    const formatterOverrideIds = Object.keys(settings.formatters).sort();
+    if (formatterOverrideIds.length === 0) {
+      lines.push("- None");
+    } else {
+      for (const id of formatterOverrideIds) {
+        lines.push(`- ${id}: ${JSON.stringify(settings.formatters[id])}`);
+      }
+    }
+
+    lines.push("", "## File checks", "");
+    if (supportedFiles.length === 0) {
+      lines.push("- No supported source files found in the first scanned workspace files.");
+      return lines.join("\n");
+    }
+
+    for (const filePath of supportedFiles) {
+      const relativePath = path.relative(ctx.cwd, filePath);
+      const serverConfigs = getServerConfigsForFile(filePath, ctx.cwd, settings);
+      const serverIds = serverConfigs.map((config) => config.id);
+      const formatterIds = getFormatterConfigsForFile(filePath, ctx.cwd).map((formatter) => formatter.id);
+      lines.push(`### ${relativePath}`);
+      lines.push("");
+      lines.push(`- Candidate servers: ${serverIds.join(", ") || "none"}`);
+      lines.push(`- Candidate formatters: ${formatterIds.join(", ") || "none"}`);
+
+      try {
+        const clients = await manager.getClientsForFile(filePath);
+        lines.push(`- Active/initialized servers: ${clients.length > 0 ? clients.map((client: any) => client.root).join(", ") : "none"}`);
+      } catch (error) {
+        lines.push(`- Client initialization error: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      try {
+        const result = await manager.touchFileAndWait(filePath, diagnosticsWaitMsForFile(filePath));
+        if (result.unsupported) {
+          lines.push(`- LSP status: unsupported`);
+          if (result.error) lines.push(`- Reason: ${result.error}`);
+        } else if (!result.receivedResponse) {
+          lines.push(`- LSP status: no response`);
+          if (result.error) lines.push(`- Reason: ${result.error}`);
+        } else {
+          lines.push(`- LSP status: responded`);
+          lines.push(`- Diagnostics: ${result.diagnostics.length}`);
+          const preview = result.diagnostics.slice(0, 5);
+          if (preview.length === 0) {
+            lines.push("- Diagnostic preview: none");
+          } else {
+            lines.push("- Diagnostic preview:");
+            for (const diagnostic of preview) {
+              lines.push(`  - ${formatDiagnostic(diagnostic)}`);
+            }
+          }
+        }
+      } catch (error) {
+        lines.push(`- LSP check error: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      lines.push("");
+    }
+
+    return lines.join("\n");
+  }
+
   async function collectDiagnostics(
     filePath: string,
     ctx: ExtensionContext,
@@ -406,65 +640,38 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.registerCommand("lsp", {
-    description: "LSP settings (auto diagnostics hook)",
-    handler: async (_args, ctx) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("LSP settings require UI", "warning");
+    description: "Show LSP and formatter status",
+    handler: async (args, ctx) => {
+      restoreHookState(ctx);
+      updateLspStatus();
+
+      const command = args.trim();
+      if (command === "doctor") {
+        const content = await buildDoctorReport(ctx);
+        const reportPath = await writeDoctorReportFile(ctx.cwd, content);
+        const message = `LSP doctor report written to ${reportPath}`;
+        if (ctx.hasUI) ctx.ui.notify(message, "info");
+        else console.log(message);
         return;
       }
 
-      const currentMark = " ✓";
-      const modeOptions = ([
-        "edit_write",
-        "agent_end",
-        "disabled",
-      ] as HookMode[]).map((mode) => ({
-        mode,
-        label: mode === hookMode ? `${labelForMode(mode)}${currentMark}` : labelForMode(mode),
-      }));
-
-      const modeChoice = await ctx.ui.select(
-        "LSP auto diagnostics hook mode:",
-        modeOptions.map((option) => option.label),
-      );
-      if (!modeChoice) return;
-
-      const nextMode = modeOptions.find((option) => option.label === modeChoice)?.mode;
-      if (!nextMode) return;
-
-      const scopeOptions = [
-        {
-          scope: "session" as HookScope,
-          label: "Session only",
-        },
-        {
-          scope: "global" as HookScope,
-          label: "Global (all sessions)",
-        },
+      const projectSettingsPath = path.join(ctx.cwd, ".pi", "settings.json");
+      const providerLabel = pythonProvider === "pyright" ? "Pyright" : PYTHON_PROVIDER_LABELS[pythonProvider];
+      const active = activeClients.size > 0 ? [...activeClients].join(", ") : "none";
+      const lines = [
+        `LSP hook: ${labelForMode(hookMode)} (${hookScope})`,
+        `Python provider: ${providerLabel} (${pythonScope})`,
+        `Formatter hook: ${formatterEnabled ? formatterHookMode : "disabled"}`,
+        `Global config: ${globalSettingsPath}`,
+        `Project config: ${projectSettingsPath}`,
+        `Active servers: ${active}`,
+        "",
+        "Configuration is file-based only.",
+        "Edit ~/.pi/agent/settings.json or .pi/settings.json to change LSP or formatter behavior.",
       ];
 
-      const scopeChoice = await ctx.ui.select(
-        "Apply LSP auto diagnostics hook setting to:",
-        scopeOptions.map((option) => option.label),
-      );
-      if (!scopeChoice) return;
-
-      const scope = scopeOptions.find((option) => option.label === scopeChoice)?.scope;
-      if (!scope) return;
-      if (scope === "global") {
-        const ok = setGlobalHookMode(nextMode);
-        if (!ok) {
-          ctx.ui.notify("Failed to update global settings", "error");
-          return;
-        }
-      }
-
-      hookMode = nextMode;
-      hookScope = scope;
-      touchedFiles.clear();
-      persistHookEntry({ scope, hookMode: nextMode });
-      updateLspStatus();
-      ctx.ui.notify(`LSP hook: ${labelForMode(hookMode)} (${hookScope})`, "info");
+      if (ctx.hasUI) ctx.ui.notify(lines.join("\n"), "info");
+      else console.log(lines.join("\n"));
     },
   });
 
@@ -483,7 +690,7 @@ export default function (pi: ExtensionAPI) {
         manager.getClientsForFile(path.join(ctx.cwd, `dummy${ext}`))
           .then((clients) => {
             if (clients.length > 0) {
-              const cfg = LSP_SERVERS.find((s) => s.extensions.includes(ext));
+              const cfg = getServerConfig(path.join(ctx.cwd, `dummy${ext}`), ctx.cwd);
               if (cfg) activeClients.add(cfg.id);
             }
           })
@@ -638,6 +845,20 @@ export default function (pi: ExtensionAPI) {
     const existedBefore = pendingToolFileExists.get(normalizedPath) ?? true;
     pendingToolFileExists.delete(normalizedPath);
 
+    let formatterMessage: string | undefined;
+    if (shouldRunFormatterForTool(event.toolName)) {
+      const formatted = await runFormatterForFile(normalizedPath, ctx.cwd);
+      if (formatted.formatterId) {
+        formatterMessage = buildFormatterMessage(
+          ctx.cwd,
+          normalizedPath,
+          formatted.formatterId,
+          formatted.changed,
+          formatted.error,
+        );
+      }
+    }
+
     await manager.notifyWorkspaceFileEvent(
       normalizedPath,
       existedBefore ? FileChangeType.Changed : FileChangeType.Created,
@@ -645,6 +866,9 @@ export default function (pi: ExtensionAPI) {
 
     if (isLspSettingsFile(normalizedPath, ctx.cwd)) {
       await manager.restartAllClients();
+      activeClients.clear();
+      restoreHookState(ctx);
+      updateLspStatus();
     } else if (shouldReloadProjectConfig(normalizedPath, ctx.cwd)) {
       await manager.restartClientsForPath(normalizedPath);
     }
@@ -665,8 +889,9 @@ export default function (pi: ExtensionAPI) {
 
     const includeWarnings = event.toolName === "write";
     const output = await collectDiagnostics(absPath, ctx, includeWarnings, false);
-    if (!output) return;
+    if (!output && !formatterMessage) return;
 
-    return { content: [...event.content, { type: "text" as const, text: output }] as Array<{ type: "text"; text: string }> };
+    const extra = [formatterMessage, output].filter(Boolean).join("");
+    return { content: [...event.content, { type: "text" as const, text: extra }] as Array<{ type: "text"; text: string }> };
   });
 }

@@ -14,8 +14,10 @@ import { mkdtemp, rm, writeFile, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
+import { FORMATTERS, getFormatterConfigsForFile } from "../formatter-core.js";
 import { LSP_SERVERS, LANGUAGE_IDS } from "../lsp-core.js";
 import { loadResolvedLspSettings } from "../lsp-settings.js";
+import { resolveLspUiState } from "../lsp.js";
 
 // ============================================================================
 // Test utilities
@@ -169,6 +171,37 @@ test("LSP_SERVERS: has Pyright server", async () => {
   assert(server !== undefined, "Should have pyright server");
   assertIncludes(server!.extensions, ".py", "Should handle .py");
   assertIncludes(server!.extensions, ".pyi", "Should handle .pyi");
+});
+
+test("LSP_SERVERS: has BasedPyright server", async () => {
+  const server = LSP_SERVERS.find(s => s.id === "basedpyright");
+  assert(server !== undefined, "Should have basedpyright server");
+  assertIncludes(server!.extensions, ".py", "Should handle .py");
+  assertIncludes(server!.extensions, ".pyi", "Should handle .pyi");
+});
+
+test("LSP_SERVERS: has Ty server", async () => {
+  const server = LSP_SERVERS.find(s => s.id === "ty");
+  assert(server !== undefined, "Should have ty server");
+  assertIncludes(server!.extensions, ".py", "Should handle .py");
+  assertIncludes(server!.extensions, ".pyi", "Should handle .pyi");
+});
+
+test("LSP_SERVERS: includes opencode-style built-ins", async () => {
+  const ids = [
+    "astro", "bash", "clangd", "deno", "eslint", "lua-ls",
+    "nixd", "php", "prisma", "terraform", "tinymist", "yaml-ls", "zls",
+  ];
+  for (const id of ids) {
+    assert(LSP_SERVERS.some((server) => server.id === id), `Should have ${id} server`);
+  }
+});
+
+test("FORMATTERS: includes opencode-style built-ins", async () => {
+  const ids = ["biome", "prettier", "ruff", "gofmt", "rustfmt", "shfmt", "terraform", "ktlint", "mix", "nixfmt", "zig"];
+  for (const id of ids) {
+    assert(FORMATTERS.some((formatter) => formatter.id === id), `Should have ${id} formatter`);
+  }
 });
 
 // ============================================================================
@@ -661,6 +694,39 @@ test("pyright: monorepo with multiple packages", async () => {
   });
 });
 
+test("basedpyright: finds root with basedpyrightconfig.json", async () => {
+  await withTempDir({
+    "basedpyrightconfig.json": "{}",
+    "src/app.py": "print('hello')",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "basedpyright")!;
+    const root = server.findRoot(join(dir, "src/app.py"), dir, {});
+    assertEquals(root, dir, "Should find root at basedpyrightconfig.json location");
+  });
+});
+
+test("ty: finds root with ty.toml", async () => {
+  await withTempDir({
+    "ty.toml": "[tool.ty]",
+    "src/app.py": "print('hello')",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "ty")!;
+    const root = server.findRoot(join(dir, "src/app.py"), dir, {});
+    assertEquals(root, dir, "Should find root at ty.toml location");
+  });
+});
+
+test("ty: falls back to pyproject.toml", async () => {
+  await withTempDir({
+    "pyproject.toml": "[project]\nname = \"app\"",
+    "src/app.py": "print('hello')",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "ty")!;
+    const root = server.findRoot(join(dir, "src/app.py"), dir, {});
+    assertEquals(root, dir, "Should still find root at pyproject.toml location");
+  });
+});
+
 // ============================================================================
 // Additional Go tests
 // ============================================================================
@@ -931,6 +997,161 @@ test("settings: custom root markers override defaults", async () => {
     });
     const root = server.findRoot(join(dir, "src/index.ts"), dir, settings.servers.typescript ?? {});
     assertEquals(root, dir, "Custom root marker should be honored");
+  });
+});
+
+test("settings: python provider and hook mode merge project over global", async () => {
+  await withTempDir({
+    ".pi": null,
+    "global-settings.json": JSON.stringify({
+      lsp: {
+        hookMode: "disabled",
+        python: {
+          provider: "basedpyright",
+        },
+      },
+    }),
+    ".pi/settings.json": JSON.stringify({
+      lsp: {
+        hookMode: "agent_end",
+        python: {
+          provider: "ty",
+        },
+      },
+    }),
+  }, async (dir) => {
+    const settings = loadResolvedLspSettings(dir, {
+      globalSettingsPath: join(dir, "global-settings.json"),
+      projectSettingsPath: join(dir, ".pi/settings.json"),
+    });
+
+    assertEquals(settings.hookMode, "agent_end", "Project hook mode should override global hook mode");
+    assertEquals(settings.pythonProvider, "ty", "Project provider should override global provider");
+  });
+});
+
+test("settings: formatter config merges project over global", async () => {
+  await withTempDir({
+    ".pi": null,
+    "global-settings.json": JSON.stringify({
+      formatter: {
+        enabled: true,
+        hookMode: "write",
+        formatters: {
+          prettier: {
+            env: { PRETTIERD_DEFAULT_CONFIG: "/tmp/prettier.json" },
+          },
+        },
+      },
+    }),
+    ".pi/settings.json": JSON.stringify({
+      formatter: {
+        hookMode: "edit_write",
+        formatters: {
+          prettier: {
+            disabled: true,
+          },
+          ruff: {
+            command: "ruff",
+          },
+        },
+      },
+    }),
+  }, async (dir) => {
+    const settings = loadResolvedLspSettings(dir, {
+      globalSettingsPath: join(dir, "global-settings.json"),
+      projectSettingsPath: join(dir, ".pi/settings.json"),
+    });
+
+    assertEquals(settings.formatterHookMode, "edit_write", "Project formatter hook mode should override global formatter hook mode");
+    assertEquals(settings.formatters.prettier?.disabled, true, "Project formatter overrides should be applied");
+    assertEquals(settings.formatters.prettier?.env?.PRETTIERD_DEFAULT_CONFIG, "/tmp/prettier.json", "Formatter env should merge from global settings");
+    assertEquals(settings.formatters.ruff?.command, "ruff", "Project-only formatter should be included");
+  });
+});
+
+test("formatter matching: project settings can disable specific formatter", async () => {
+  await withTempDir({
+    ".pi": null,
+    ".pi/settings.json": JSON.stringify({
+      formatter: {
+        formatters: {
+          biome: { disabled: true },
+        },
+      },
+    }),
+    "package.json": "{}",
+    "src/index.ts": "export const x = 1;",
+  }, async (dir) => {
+    const matches = getFormatterConfigsForFile(join(dir, "src/index.ts"), dir);
+    assert(matches.some((formatter) => formatter.id === "prettier"), "Prettier should still match");
+    assert(!matches.some((formatter) => formatter.id === "biome"), "Biome should be excluded when disabled in settings");
+  });
+});
+
+test("resolveLspUiState: session override beats disk settings", async () => {
+  await withTempDir({
+    ".pi": null,
+    "global-settings.json": JSON.stringify({
+      lsp: {
+        hookMode: "disabled",
+        python: {
+          provider: "basedpyright",
+        },
+      },
+    }),
+    ".pi/settings.json": JSON.stringify({
+      lsp: {
+        hookMode: "agent_end",
+        python: {
+          provider: "ty",
+        },
+      },
+    }),
+  }, async (dir) => {
+    const resolved = resolveLspUiState(dir, {
+      scope: "session",
+      hookMode: "edit_write",
+      pythonProvider: "basedpyright",
+    }, join(dir, "global-settings.json"));
+
+    assertEquals(resolved.hookMode, "edit_write", "Session hook mode should win");
+    assertEquals(resolved.hookScope, "session", "Hook scope should be session");
+    assertEquals(resolved.pythonProvider, "basedpyright", "Session provider should win");
+    assertEquals(resolved.pythonScope, "session", "Python scope should be session");
+  });
+});
+
+test("resolveLspUiState: project scope is reported from disk settings", async () => {
+  await withTempDir({
+    ".pi": null,
+    "global-settings.json": JSON.stringify({
+      lsp: {
+        hookMode: "disabled",
+        python: {
+          provider: "basedpyright",
+        },
+      },
+    }),
+    ".pi/settings.json": JSON.stringify({
+      lsp: {
+        hookMode: "agent_end",
+        python: {
+          provider: "ty",
+        },
+      },
+    }),
+  }, async (dir) => {
+    const resolved = resolveLspUiState(dir, {
+      scope: "project",
+      hookMode: "agent_end",
+      pythonProvider: "ty",
+    }, join(dir, "global-settings.json"));
+
+    assertEquals(resolved.hookMode, "agent_end", "Project hook mode should come from disk");
+    assertEquals(resolved.hookScope, "project", "Hook scope should be project");
+    assertEquals(resolved.pythonProvider, "ty", "Project provider should come from disk");
+    assertEquals(resolved.pythonScope, "project", "Python scope should be project");
   });
 });
 

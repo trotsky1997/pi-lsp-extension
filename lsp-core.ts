@@ -51,7 +51,7 @@ import {
   DocumentDiagnosticReportKind,
   FileChangeType,
 } from "vscode-languageserver-protocol";
-import { loadResolvedLspSettings, type LSPServerSettings } from "./lsp-settings.js";
+import { loadResolvedLspSettings, type LSPServerSettings, type PythonProvider, type ResolvedLSPSettings } from "./lsp-settings.js";
 
 // Config
 const INIT_TIMEOUT_MS = 30000;
@@ -65,6 +65,16 @@ export const LANGUAGE_IDS: Record<string, string> = {
   ".cjs": "javascript", ".mts": "typescript", ".cts": "typescript",
   ".vue": "vue", ".svelte": "svelte", ".astro": "astro",
   ".py": "python", ".pyi": "python", ".go": "go", ".rs": "rust",
+  ".c": "c", ".h": "c", ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp",
+  ".hpp": "cpp", ".hh": "cpp", ".cs": "csharp",
+  ".clj": "clojure", ".cljs": "clojure", ".cljc": "clojure",
+  ".ex": "elixir", ".exs": "elixir", ".fs": "fsharp", ".fsx": "fsharp",
+  ".gleam": "gleam", ".hs": "haskell", ".lhs": "haskell",
+  ".java": "java", ".jl": "julia", ".lua": "lua", ".nix": "nix",
+  ".ml": "ocaml", ".mli": "ocaml", ".php": "php", ".prisma": "prisma",
+  ".rb": "ruby", ".erb": "erb", ".tf": "terraform", ".tfvars": "terraform",
+  ".tmLanguage": "xml", ".typ": "typst", ".yaml": "yaml", ".yml": "yaml",
+  ".zig": "zig",
   ".kt": "kotlin", ".kts": "kotlin",
   ".swift": "swift",
 };
@@ -75,6 +85,24 @@ interface LSPServerConfig {
   extensions: string[];
   findRoot: (file: string, cwd: string, settings: LSPServerSettings) => string | undefined;
   spawn: (root: string, settings: LSPServerSettings) => Promise<{ process: ChildProcessWithoutNullStreams; initializationOptions?: Record<string, unknown>; workspaceConfiguration?: Record<string, unknown> } | undefined>;
+}
+
+const PYTHON_ROOT_MARKERS = ["pyproject.toml", "setup.py", "requirements.txt", "pyrightconfig.json"];
+const PYRIGHT_FAMILY_ROOT_MARKERS = [...PYTHON_ROOT_MARKERS, "basedpyrightconfig.json"];
+const TY_ROOT_MARKERS = ["ty.toml", ...PYTHON_ROOT_MARKERS];
+
+export function getSelectedPythonProvider(settings: ResolvedLSPSettings): PythonProvider {
+  return settings.pythonProvider;
+}
+
+export function getServerConfigsForFile(filePath: string, cwd: string, settings = loadResolvedLspSettings(cwd)): LSPServerConfig[] {
+  if (!settings.enabled) return [];
+  const ext = path.extname(filePath);
+  if (ext === ".py" || ext === ".pyi") {
+    const selected = getSelectedPythonProvider(settings);
+    return LSP_SERVERS.filter((config) => config.id === selected);
+  }
+  return LSP_SERVERS.filter((config) => config.extensions.includes(ext));
 }
 
 interface OpenFile { content: string; lastAccess: number; version: number; }
@@ -135,6 +163,24 @@ function findNearestFile(startDir: string, targets: string[], stopDir: string): 
       const candidate = path.join(current, t);
       if (fs.existsSync(candidate)) return candidate;
     }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+}
+
+function findNearestDirEntryWithSuffix(startDir: string, suffixes: string[], stopDir: string): string | undefined {
+  let current = path.resolve(startDir);
+  const stop = path.resolve(stopDir);
+  while (current.length >= stop.length) {
+    try {
+      const entries = fs.readdirSync(current, { withFileTypes: true });
+      for (const entry of entries) {
+        if (suffixes.some((suffix) => entry.name.endsWith(suffix))) {
+          return path.join(current, entry.name);
+        }
+      }
+    } catch {}
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
@@ -247,6 +293,32 @@ function simpleSpawn(bin: string, args: string[] = ["--stdio"]) {
     if (!cmd) return undefined;
     return { process: spawn(cmd, args, { cwd: root, env: buildSpawnEnv(settings), stdio: ["pipe", "pipe", "pipe"] }) };
   }, args);
+}
+
+function localNodeCommand(root: string, binaryName: string): string | undefined {
+  const local = path.join(root, "node_modules/.bin", binaryName);
+  if (fs.existsSync(local)) return local;
+  return which(binaryName);
+}
+
+function nodeSpawn(binaryName: string, args: string[] = ["--stdio"]) {
+  return async (root: string, settings: LSPServerSettings) => spawnConfiguredCommand(settings, root, async () => {
+    const cmd = localNodeCommand(root, binaryName);
+    if (!cmd) return undefined;
+    return { process: spawn(cmd, args, { cwd: root, env: buildSpawnEnv(settings), stdio: ["pipe", "pipe", "pipe"] }) };
+  }, args);
+}
+
+function markerRoot(markers: string[]) {
+  return (f: string, cwd: string, settings: LSPServerSettings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, markers));
+}
+
+function suffixRoot(suffixes: string[], markers: string[] = []) {
+  return (f: string, cwd: string, settings: LSPServerSettings) => resolveRootWithOverride(f, cwd, settings, () => {
+    const bySuffix = findNearestDirEntryWithSuffix(path.dirname(f), suffixes, cwd);
+    if (bySuffix) return path.dirname(bySuffix);
+    return markers.length > 0 ? findRoot(f, cwd, markers) : undefined;
+  });
 }
 
 function findRootKotlin(file: string, cwd: string): string | undefined {
@@ -431,6 +503,26 @@ export const LSP_SERVERS: LSPServerConfig[] = [
       return { process: spawn(dart, ["language-server", "--protocol=lsp"], { cwd: root, env: buildSpawnEnv(settings), stdio: ["pipe", "pipe", "pipe"] }) };
     }, ["language-server", "--protocol=lsp"]),
   },
+  { id: "astro", extensions: [".astro"], findRoot: markerRoot(["package.json", "astro.config.mjs", "astro.config.ts", "astro.config.js"]), spawn: nodeSpawn("astro-ls") },
+  { id: "bash", extensions: [".sh", ".bash", ".zsh"], findRoot: markerRoot([".git", "package.json", "pyproject.toml"]), spawn: nodeSpawn("bash-language-server", ["start"]) },
+  { id: "clangd", extensions: [".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".m", ".mm"], findRoot: markerRoot(["compile_commands.json", "compile_flags.txt", "CMakeLists.txt", "Makefile"]), spawn: simpleSpawn("clangd", ["--background-index"]) },
+  { id: "csharp", extensions: [".cs"], findRoot: suffixRoot([".sln", ".csproj"], ["global.json"]), spawn: simpleSpawn("csharp-ls") },
+  { id: "clojure-lsp", extensions: [".clj", ".cljs", ".cljc", ".edn"], findRoot: markerRoot(["deps.edn", "project.clj", "bb.edn"]), spawn: simpleSpawn("clojure-lsp") },
+  { id: "deno", extensions: [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"], findRoot: markerRoot(["deno.json", "deno.jsonc"]), spawn: simpleSpawn("deno", ["lsp"]) },
+  { id: "elixir-ls", extensions: [".ex", ".exs"], findRoot: markerRoot(["mix.exs"]), spawn: simpleSpawn("language_server.sh") },
+  { id: "eslint", extensions: [".js", ".jsx", ".cjs", ".mjs", ".ts", ".tsx", ".vue", ".svelte"], findRoot: markerRoot(["package.json", ".eslintrc", ".eslintrc.js", ".eslintrc.cjs", "eslint.config.js", "eslint.config.mjs"]), spawn: nodeSpawn("vscode-eslint-language-server") },
+  { id: "fsharp", extensions: [".fs", ".fsx", ".fsi"], findRoot: suffixRoot([".sln", ".fsproj"], ["global.json"]), spawn: simpleSpawn("fsautocomplete", ["--adaptive-lsp-server"]) },
+  { id: "gleam", extensions: [".gleam"], findRoot: markerRoot(["gleam.toml"]), spawn: simpleSpawn("gleam", ["lsp"]) },
+  { id: "hls", extensions: [".hs", ".lhs"], findRoot: markerRoot(["hie.yaml", "cabal.project", "stack.yaml", "package.yaml"]), spawn: simpleSpawn("haskell-language-server-wrapper", ["--lsp"]) },
+  { id: "jdtls", extensions: [".java"], findRoot: markerRoot(["pom.xml", "build.gradle", "build.gradle.kts", ".project"]), spawn: simpleSpawn("jdtls", []) },
+  { id: "julials", extensions: [".jl"], findRoot: markerRoot(["Project.toml", "JuliaProject.toml"]), spawn: simpleSpawn("julia-language-server") },
+  { id: "lua-ls", extensions: [".lua"], findRoot: markerRoot([".luarc.json", ".luarc.jsonc", "stylua.toml", ".git"]), spawn: simpleSpawn("lua-language-server") },
+  { id: "nixd", extensions: [".nix"], findRoot: markerRoot(["flake.nix", "shell.nix", "default.nix"]), spawn: simpleSpawn("nixd") },
+  { id: "ocaml-lsp", extensions: [".ml", ".mli"], findRoot: suffixRoot([".opam"], ["dune-project", "dune-workspace"]), spawn: simpleSpawn("ocamllsp") },
+  { id: "oxlint", extensions: [".js", ".jsx", ".cjs", ".mjs", ".ts", ".tsx", ".vue", ".svelte"], findRoot: markerRoot(["package.json", "oxlint.json"]), spawn: simpleSpawn("oxc_language_server") },
+  { id: "php", extensions: [".php"], findRoot: markerRoot(["composer.json", ".git"]), spawn: nodeSpawn("intelephense", ["--stdio"]) },
+  { id: "prisma", extensions: [".prisma"], findRoot: markerRoot(["schema.prisma", "package.json"]), spawn: nodeSpawn("prisma-language-server", ["--stdio"]) },
+  { id: "ruby-lsp", extensions: [".rb", ".erb"], findRoot: markerRoot(["Gemfile", ".ruby-version"]), spawn: simpleSpawn("ruby-lsp") },
   {
     id: "typescript", extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"],
     findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => {
@@ -446,7 +538,11 @@ export const LSP_SERVERS: LSPServerConfig[] = [
   },
   { id: "vue", extensions: [".vue"], findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, ["package.json", "vite.config.ts", "vite.config.js"])), spawn: simpleSpawn("vue-language-server") },
   { id: "svelte", extensions: [".svelte"], findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, ["package.json", "svelte.config.js"])), spawn: simpleSpawn("svelteserver") },
-  { id: "pyright", extensions: [".py", ".pyi"], findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, ["pyproject.toml", "setup.py", "requirements.txt", "pyrightconfig.json"])), spawn: simpleSpawn("pyright-langserver") },
+  { id: "terraform", extensions: [".tf", ".tfvars", ".hcl"], findRoot: markerRoot([".terraform", "main.tf", "terraform.tf"]), spawn: simpleSpawn("terraform-ls", ["serve"]) },
+  { id: "tinymist", extensions: [".typ"], findRoot: markerRoot(["typst.toml", ".git"]), spawn: simpleSpawn("tinymist") },
+  { id: "pyright", extensions: [".py", ".pyi"], findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, PYRIGHT_FAMILY_ROOT_MARKERS)), spawn: simpleSpawn("pyright-langserver") },
+  { id: "basedpyright", extensions: [".py", ".pyi"], findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, PYRIGHT_FAMILY_ROOT_MARKERS)), spawn: simpleSpawn("basedpyright-langserver") },
+  { id: "ty", extensions: [".py", ".pyi"], findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, TY_ROOT_MARKERS)), spawn: simpleSpawn("ty", ["server"]) },
   { id: "gopls", extensions: [".go"], findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, ["go.work"]) || findRoot(f, cwd, ["go.mod"])), spawn: simpleSpawn("gopls", []) },
   {
     id: "kotlin", extensions: [".kt", ".kts"],
@@ -466,6 +562,8 @@ export const LSP_SERVERS: LSPServerConfig[] = [
       return { process: proc };
     }),
   },
+  { id: "yaml-ls", extensions: [".yaml", ".yml"], findRoot: markerRoot([".git", "package.json"]), spawn: nodeSpawn("yaml-language-server", ["--stdio"]) },
+  { id: "zls", extensions: [".zig"], findRoot: markerRoot(["build.zig", "zls.json"]), spawn: simpleSpawn("zls") },
   { id: "rust-analyzer", extensions: [".rs"], findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, ["Cargo.toml"])), spawn: simpleSpawn("rust-analyzer", []) },
 ];
 
@@ -650,13 +748,11 @@ export class LSPManager {
   }
 
   async getClientsForFile(filePath: string): Promise<LSPClient[]> {
-    const ext = path.extname(filePath);
     const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.cwd, filePath);
     const clients: LSPClient[] = [];
     const settings = loadResolvedLspSettings(this.cwd);
 
-    for (const config of LSP_SERVERS) {
-      if (!config.extensions.includes(ext)) continue;
+    for (const config of getServerConfigsForFile(absPath, this.cwd, settings)) {
       const root = config.findRoot(absPath, this.cwd, settings.servers[config.id] ?? {});
       if (!root) continue;
       const k = this.key(config.id, root);
@@ -780,6 +876,16 @@ export class LSPManager {
     return matches.length;
   }
 
+  async restartClientsByServerIds(serverIds: string[]): Promise<number> {
+    const wanted = new Set(serverIds);
+    const matches = Array.from(this.clients.entries()).filter(([key]) => wanted.has(key.split(":", 1)[0] ?? ""));
+    await Promise.all(matches.map(async ([key, client]) => {
+      this.clients.delete(key);
+      await this.stopClient(client);
+    }));
+    return matches.length;
+  }
+
   async restartAllClients(): Promise<number> {
     const matches = Array.from(this.clients.entries());
     await Promise.all(matches.map(async ([key, client]) => {
@@ -831,6 +937,32 @@ export class LSPManager {
 
   private explainNoLsp(absPath: string): string {
     const ext = path.extname(absPath);
+
+    if (ext === ".py" || ext === ".pyi") {
+      const settings = loadResolvedLspSettings(this.cwd);
+      const provider = getSelectedPythonProvider(settings);
+      const config = LSP_SERVERS.find((server) => server.id === provider);
+      const root = config?.findRoot(absPath, this.cwd, settings.servers[provider] ?? {});
+      if (!root) {
+        const markers = provider === "ty" ? TY_ROOT_MARKERS : PYRIGHT_FAMILY_ROOT_MARKERS;
+        return `No Python project root detected for ${provider} (looked for ${markers.join(", ")} under cwd)`;
+      }
+
+      const binary = provider === "basedpyright"
+        ? "basedpyright-langserver"
+        : provider === "ty"
+          ? "ty"
+          : "pyright-langserver";
+      if (!which(binary)) {
+        return provider === "ty"
+          ? "Python provider 'ty' is selected, but the 'ty' binary was not found"
+          : `Python provider '${provider}' is selected, but '${binary}' was not found`;
+      }
+
+      const k = this.key(provider, root);
+      if (this.broken.has(k)) return `Python LSP '${provider}' failed to initialize for root: ${root}`;
+      return `Python LSP '${provider}' unavailable for root: ${root}`;
+    }
 
     if (ext === ".kt" || ext === ".kts") {
       const root = findRootKotlin(absPath, this.cwd);
