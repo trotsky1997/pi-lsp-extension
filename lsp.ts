@@ -17,9 +17,10 @@ import * as os from "node:os";
 import { type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { FileChangeType, type Diagnostic } from "vscode-languageserver-protocol";
+import { getAnalyzerConfigsForFile, runAnalyzersForFile } from "./analyzer-core.js";
 import { getFormatterConfigsForFile, runFormatterForFile } from "./formatter-core.js";
 import { formatDiagnostic, getOrCreateManager, getServerConfigsForFile, shutdownManager } from "./lsp-core.js";
-import { loadResolvedLspSettings, type FormatterHookMode, type HookMode, type PythonProvider } from "./lsp-settings.js";
+import { loadResolvedLspSettings, type AnalyzerHookMode, type FormatterHookMode, type HookMode, type PythonProvider } from "./lsp-settings.js";
 
 type HookScope = "session" | "global" | "project";
 
@@ -43,6 +44,7 @@ const DIM = "\x1b[2m", GREEN = "\x1b[32m", YELLOW = "\x1b[33m", RESET = "\x1b[0m
 const DEFAULT_HOOK_MODE: HookMode = "agent_end";
 const DEFAULT_PYTHON_PROVIDER: PythonProvider = "pyright";
 const DEFAULT_FORMATTER_HOOK_MODE: FormatterHookMode = "write";
+const DEFAULT_ANALYZER_HOOK_MODE: AnalyzerHookMode = "agent_end";
 const SETTINGS_NAMESPACE = "lsp";
 const LSP_CONFIG_ENTRY = "lsp-hook-config";
 
@@ -161,6 +163,8 @@ interface LspResolvedUiState {
   pythonScope: HookScope;
   formatterEnabled: boolean;
   formatterHookMode: FormatterHookMode;
+  analyzerEnabled: boolean;
+  analyzerHookMode: AnalyzerHookMode;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -221,6 +225,8 @@ export function resolveLspUiState(
       pythonScope: "session",
       formatterEnabled: resolved.formatterEnabled,
       formatterHookMode: resolved.formatterHookMode ?? DEFAULT_FORMATTER_HOOK_MODE,
+      analyzerEnabled: resolved.analyzerEnabled,
+      analyzerHookMode: resolved.analyzerHookMode ?? DEFAULT_ANALYZER_HOOK_MODE,
     };
   }
 
@@ -231,6 +237,8 @@ export function resolveLspUiState(
     pythonScope: sessionEntry?.scope === "project" ? "project" : pythonScope,
     formatterEnabled: resolved.formatterEnabled,
     formatterHookMode: resolved.formatterHookMode ?? DEFAULT_FORMATTER_HOOK_MODE,
+    analyzerEnabled: resolved.analyzerEnabled,
+    analyzerHookMode: resolved.analyzerHookMode ?? DEFAULT_ANALYZER_HOOK_MODE,
   };
 }
 
@@ -270,6 +278,8 @@ export default function (pi: ExtensionAPI) {
   let pythonScope: HookScope = "global";
   let formatterEnabled = true;
   let formatterHookMode: FormatterHookMode = DEFAULT_FORMATTER_HOOK_MODE;
+  let analyzerEnabled = true;
+  let analyzerHookMode: AnalyzerHookMode = DEFAULT_ANALYZER_HOOK_MODE;
   let activity: LspActivity = "idle";
   let diagnosticsAbort: AbortController | null = null;
   let shuttingDown = false;
@@ -312,6 +322,8 @@ export default function (pi: ExtensionAPI) {
     pythonScope = resolved.pythonScope;
     formatterEnabled = resolved.formatterEnabled;
     formatterHookMode = resolved.formatterHookMode;
+    analyzerEnabled = resolved.analyzerEnabled;
+    analyzerHookMode = resolved.analyzerHookMode;
   }
 
   function persistHookEntry(entry: LspConfigEntry): void {
@@ -388,12 +400,15 @@ export default function (pi: ExtensionAPI) {
     const formatterText = formatterEnabled && formatterHookMode !== "disabled"
       ? `${DIM}fmt:${formatterHookMode}${RESET}`
       : `${DIM}fmt:off${RESET}`;
+    const analyzerText = analyzerEnabled && analyzerHookMode !== "disabled"
+      ? `${DIM}an:${analyzerHookMode}${RESET}`
+      : `${DIM}an:off${RESET}`;
 
     if (hookMode === "disabled") {
-      const text = clientsText
-        ? `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET} ${providerText} ${formatterText}: ${clientsText}`
-        : `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET} ${providerText} ${formatterText}`;
-      statusUpdateFn("lsp", text);
+      const nextText = clientsText
+        ? `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET} ${providerText} ${formatterText} ${analyzerText}: ${clientsText}`
+        : `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET} ${providerText} ${formatterText} ${analyzerText}`;
+      statusUpdateFn("lsp", nextText);
       return;
     }
 
@@ -401,6 +416,7 @@ export default function (pi: ExtensionAPI) {
     if (activityHint) text += ` ${activityHint}`;
     text += ` ${providerText}`;
     text += ` ${formatterText}`;
+    text += ` ${analyzerText}`;
     if (clientsText) text += ` ${clientsText}`;
     statusUpdateFn("lsp", text);
   }
@@ -502,12 +518,31 @@ export default function (pi: ExtensionAPI) {
     return toolName === "write" || toolName === "edit";
   }
 
+  function shouldRunAnalyzerForTool(toolName: string): boolean {
+    if (!analyzerEnabled || analyzerHookMode === "disabled" || analyzerHookMode === "agent_end") return false;
+    if (analyzerHookMode === "write") return toolName === "write";
+    return toolName === "write" || toolName === "edit";
+  }
+
   function buildFormatterMessage(cwd: string, filePath: string, formatterId: string, changed: boolean, error?: string): string {
     const relativePath = path.relative(cwd, filePath);
     if (error) return `\nFormatter ${formatterId} failed for ${relativePath}: ${error}\n`;
     return changed
       ? `\nFormatted ${relativePath} with ${formatterId}.\n`
       : `\nFormatter ${formatterId} checked ${relativePath}; no changes.\n`;
+  }
+
+  function buildAnalyzerMessage(cwd: string, filePath: string, analyzerId: string, findingCount: number, findings: Array<{ message: string; line: number; column: number; ruleId?: string }>, error?: string): string {
+    const relativePath = path.relative(cwd, filePath);
+    if (error && findingCount === 0) return `\nAnalyzer ${analyzerId} failed for ${relativePath}: ${error}\n`;
+    const preview = findings.slice(0, 5).map((finding) => {
+      const rule = finding.ruleId ? ` [${finding.ruleId}]` : "";
+      return `- ${finding.line}:${finding.column}${rule} ${finding.message}`;
+    }).join("\n");
+    const remainder = findingCount > 5 ? `\n... +${findingCount - 5} more` : "";
+    return findingCount > 0
+      ? `\nAnalyzer ${analyzerId} found ${findingCount} issue(s) in ${relativePath}:\n${preview}${remainder}\n`
+      : `\nAnalyzer ${analyzerId} checked ${relativePath}; no issues.\n`;
   }
 
   async function buildDoctorReport(ctx: ExtensionContext): Promise<string> {
@@ -528,6 +563,8 @@ export default function (pi: ExtensionAPI) {
       `- Python provider: ${settings.pythonProvider}`,
       `- Formatter enabled: ${settings.formatterEnabled}`,
       `- Formatter hook mode: ${settings.formatterHookMode}`,
+      `- Analyzer enabled: ${settings.analyzerEnabled}`,
+      `- Analyzer hook mode: ${settings.analyzerHookMode}`,
       "",
       "## Configured server overrides",
       "",
@@ -552,6 +589,16 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
+    lines.push("", "## Configured analyzer overrides", "");
+    const analyzerOverrideIds = Object.keys(settings.analyzers).sort();
+    if (analyzerOverrideIds.length === 0) {
+      lines.push("- None");
+    } else {
+      for (const id of analyzerOverrideIds) {
+        lines.push(`- ${id}: ${JSON.stringify(settings.analyzers[id])}`);
+      }
+    }
+
     lines.push("", "## File checks", "");
     if (supportedFiles.length === 0) {
       lines.push("- No supported source files found in the first scanned workspace files.");
@@ -563,10 +610,12 @@ export default function (pi: ExtensionAPI) {
       const serverConfigs = getServerConfigsForFile(filePath, ctx.cwd, settings);
       const serverIds = serverConfigs.map((config) => config.id);
       const formatterIds = getFormatterConfigsForFile(filePath, ctx.cwd).map((formatter) => formatter.id);
+      const analyzerIds = getAnalyzerConfigsForFile(filePath, ctx.cwd).map((analyzer) => analyzer.id);
       lines.push(`### ${relativePath}`);
       lines.push("");
       lines.push(`- Candidate servers: ${serverIds.join(", ") || "none"}`);
       lines.push(`- Candidate formatters: ${formatterIds.join(", ") || "none"}`);
+      lines.push(`- Candidate analyzers: ${analyzerIds.join(", ") || "none"}`);
 
       try {
         const clients = await manager.getClientsForFile(filePath);
@@ -598,6 +647,19 @@ export default function (pi: ExtensionAPI) {
         }
       } catch (error) {
         lines.push(`- LSP check error: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      try {
+        const analysis = await runAnalyzersForFile(filePath, ctx.cwd);
+        if (analysis.skipped) {
+          lines.push(`- Analyzer status: ${analysis.skipped}`);
+        } else {
+          lines.push(`- Analyzer status: ran ${analysis.analyzerId ?? "unknown"}`);
+          lines.push(`- Analyzer findings: ${analysis.findings.length}`);
+          if (analysis.error) lines.push(`- Analyzer stderr: ${analysis.error}`);
+        }
+      } catch (error) {
+        lines.push(`- Analyzer check error: ${error instanceof Error ? error.message : String(error)}`);
       }
 
       lines.push("");
@@ -639,6 +701,15 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
+  async function collectAnalyzerDiagnostics(
+    filePath: string,
+    ctx: ExtensionContext,
+  ): Promise<string | undefined> {
+    const result = await runAnalyzersForFile(filePath, ctx.cwd);
+    if (!result.analyzerId) return undefined;
+    return buildAnalyzerMessage(ctx.cwd, filePath, result.analyzerId, result.findings.length, result.findings, result.error);
+  }
+
   pi.registerCommand("lsp", {
     description: "Show LSP and formatter status",
     handler: async (args, ctx) => {
@@ -662,12 +733,13 @@ export default function (pi: ExtensionAPI) {
         `LSP hook: ${labelForMode(hookMode)} (${hookScope})`,
         `Python provider: ${providerLabel} (${pythonScope})`,
         `Formatter hook: ${formatterEnabled ? formatterHookMode : "disabled"}`,
+        `Analyzer hook: ${analyzerEnabled ? analyzerHookMode : "disabled"}`,
         `Global config: ${globalSettingsPath}`,
         `Project config: ${projectSettingsPath}`,
         `Active servers: ${active}`,
         "",
         "Configuration is file-based only.",
-        "Edit ~/.pi/agent/settings.json or .pi/settings.json to change LSP or formatter behavior.",
+        "Edit ~/.pi/agent/settings.json or .pi/settings.json to change LSP, formatter, or analyzer behavior.",
       ];
 
       if (ctx.hasUI) ctx.ui.notify(lines.join("\n"), "info");
@@ -811,6 +883,12 @@ export default function (pi: ExtensionAPI) {
           const output = await collectDiagnostics(filePath, ctx, includeWarnings, true, false);
           if (abort.signal.aborted) return;
           if (output) outputs.push(output);
+
+          if (analyzerEnabled && analyzerHookMode === "agent_end") {
+            const analyzerOutput = await collectAnalyzerDiagnostics(filePath, ctx);
+            if (abort.signal.aborted) return;
+            if (analyzerOutput) outputs.push(analyzerOutput);
+          }
         }
 
         if (shuttingDown || abort.signal.aborted) return;
@@ -859,6 +937,21 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
+    let analyzerMessage: string | undefined;
+    if (shouldRunAnalyzerForTool(event.toolName)) {
+      const analyzed = await runAnalyzersForFile(normalizedPath, ctx.cwd);
+      if (analyzed.analyzerId) {
+        analyzerMessage = buildAnalyzerMessage(
+          ctx.cwd,
+          normalizedPath,
+          analyzed.analyzerId,
+          analyzed.findings.length,
+          analyzed.findings,
+          analyzed.error,
+        );
+      }
+    }
+
     await manager.notifyWorkspaceFileEvent(
       normalizedPath,
       existedBefore ? FileChangeType.Changed : FileChangeType.Created,
@@ -889,9 +982,9 @@ export default function (pi: ExtensionAPI) {
 
     const includeWarnings = event.toolName === "write";
     const output = await collectDiagnostics(absPath, ctx, includeWarnings, false);
-    if (!output && !formatterMessage) return;
+    if (!output && !formatterMessage && !analyzerMessage) return;
 
-    const extra = [formatterMessage, output].filter(Boolean).join("");
+    const extra = [formatterMessage, analyzerMessage, output].filter(Boolean).join("");
     return { content: [...event.content, { type: "text" as const, text: extra }] as Array<{ type: "text"; text: string }> };
   });
 }

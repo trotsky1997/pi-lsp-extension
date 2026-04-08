@@ -63,6 +63,7 @@ export const LANGUAGE_IDS: Record<string, string> = {
   ".dart": "dart", ".ts": "typescript", ".tsx": "typescriptreact",
   ".js": "javascript", ".jsx": "javascriptreact", ".mjs": "javascript",
   ".cjs": "javascript", ".mts": "typescript", ".cts": "typescript",
+  ".md": "markdown", ".mdx": "mdx",
   ".vue": "vue", ".svelte": "svelte", ".astro": "astro",
   ".py": "python", ".pyi": "python", ".go": "go", ".rs": "rust",
   ".c": "c", ".h": "c", ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp",
@@ -321,6 +322,14 @@ function suffixRoot(suffixes: string[], markers: string[] = []) {
   });
 }
 
+function workspaceRoot() {
+  return (f: string, cwd: string, settings: LSPServerSettings) => resolveRootWithOverride(f, cwd, settings, () => {
+    const absFile = path.resolve(f);
+    const absCwd = path.resolve(cwd);
+    return absFile.startsWith(absCwd) ? absCwd : undefined;
+  });
+}
+
 function findRootKotlin(file: string, cwd: string): string | undefined {
   // Prefer Gradle settings root for multi-module projects
   const gradleRoot = findRoot(file, cwd, ["settings.gradle.kts", "settings.gradle"]);
@@ -478,6 +487,7 @@ async function spawnSourcekitLsp(root: string, settings: LSPServerSettings): Pro
 
 // Server Configs
 export const LSP_SERVERS: LSPServerConfig[] = [
+  { id: "markdown", extensions: [".md", ".mdx"], findRoot: workspaceRoot(), spawn: simpleSpawn("rumdl", ["server"]) },
   {
     id: "dart", extensions: [".dart"],
     findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, ["pubspec.yaml", "analysis_options.yaml"])),

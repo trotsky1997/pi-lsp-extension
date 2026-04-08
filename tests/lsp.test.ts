@@ -14,6 +14,7 @@ import { mkdtemp, rm, writeFile, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
+import { ANALYZERS, getAnalyzerConfigsForFile } from "../analyzer-core.js";
 import { FORMATTERS, getFormatterConfigsForFile } from "../formatter-core.js";
 import { LSP_SERVERS, LANGUAGE_IDS } from "../lsp-core.js";
 import { loadResolvedLspSettings } from "../lsp-settings.js";
@@ -122,6 +123,11 @@ test("LANGUAGE_IDS: Vue/Svelte/Astro extensions", async () => {
   assertEquals(LANGUAGE_IDS[".astro"], "astro", ".astro should map to astro");
 });
 
+test("LANGUAGE_IDS: Markdown extensions", async () => {
+  assertEquals(LANGUAGE_IDS[".md"], "markdown", ".md should map to markdown");
+  assertEquals(LANGUAGE_IDS[".mdx"], "mdx", ".mdx should map to mdx");
+});
+
 // ============================================================================
 // Server configuration tests
 // ============================================================================
@@ -189,7 +195,7 @@ test("LSP_SERVERS: has Ty server", async () => {
 
 test("LSP_SERVERS: includes opencode-style built-ins", async () => {
   const ids = [
-    "astro", "bash", "clangd", "deno", "eslint", "lua-ls",
+    "astro", "bash", "clangd", "deno", "eslint", "lua-ls", "markdown",
     "nixd", "php", "prisma", "terraform", "tinymist", "yaml-ls", "zls",
   ];
   for (const id of ids) {
@@ -198,10 +204,31 @@ test("LSP_SERVERS: includes opencode-style built-ins", async () => {
 });
 
 test("FORMATTERS: includes opencode-style built-ins", async () => {
-  const ids = ["biome", "prettier", "ruff", "gofmt", "rustfmt", "shfmt", "terraform", "ktlint", "mix", "nixfmt", "zig"];
+  const ids = ["biome", "prettier", "rumdl", "ruff", "gofmt", "rustfmt", "shfmt", "terraform", "ktlint", "mix", "nixfmt", "zig"];
   for (const id of ids) {
     assert(FORMATTERS.some((formatter) => formatter.id === id), `Should have ${id} formatter`);
   }
+});
+
+test("ANALYZERS: includes semgrep", async () => {
+  assert(ANALYZERS.some((analyzer) => analyzer.id === "semgrep"), "Should have semgrep analyzer");
+});
+
+test("ANALYZERS: includes common linter-style analyzers", async () => {
+  const ids = ["ruff-check", "golangci-lint", "markdownlint", "shellcheck", "hadolint"];
+  for (const id of ids) {
+    assert(ANALYZERS.some((analyzer) => analyzer.id === id), `Should have ${id} analyzer`);
+  }
+});
+
+test("markdown: uses workspace root", async () => {
+  await withTempDir({
+    "docs/guide.md": "# Guide",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "markdown")!;
+    const root = server.findRoot(join(dir, "docs/guide.md"), dir, {});
+    assertEquals(root, dir, "Markdown should use workspace root");
+  });
 });
 
 // ============================================================================
@@ -1070,6 +1097,42 @@ test("settings: formatter config merges project over global", async () => {
   });
 });
 
+test("settings: analyzer config merges project over global", async () => {
+  await withTempDir({
+    ".pi": null,
+    "global-settings.json": JSON.stringify({
+      analyzer: {
+        enabled: true,
+        hookMode: "agent_end",
+        tools: {
+          semgrep: {
+            env: { SEMGREP_APP_TOKEN: "global" },
+          },
+        },
+      },
+    }),
+    ".pi/settings.json": JSON.stringify({
+      analyzer: {
+        hookMode: "edit_write",
+        analyzers: {
+          semgrep: {
+            disabled: true,
+          },
+        },
+      },
+    }),
+  }, async (dir) => {
+    const settings = loadResolvedLspSettings(dir, {
+      globalSettingsPath: join(dir, "global-settings.json"),
+      projectSettingsPath: join(dir, ".pi/settings.json"),
+    });
+
+    assertEquals(settings.analyzerHookMode, "edit_write", "Project analyzer hook mode should override global analyzer hook mode");
+    assertEquals(settings.analyzers.semgrep?.disabled, true, "Project analyzer overrides should be applied");
+    assertEquals(settings.analyzers.semgrep?.env?.SEMGREP_APP_TOKEN, "global", "Analyzer env should merge from global settings");
+  });
+});
+
 test("formatter matching: project settings can disable specific formatter", async () => {
   await withTempDir({
     ".pi": null,
@@ -1086,6 +1149,86 @@ test("formatter matching: project settings can disable specific formatter", asyn
     const matches = getFormatterConfigsForFile(join(dir, "src/index.ts"), dir);
     assert(matches.some((formatter) => formatter.id === "prettier"), "Prettier should still match");
     assert(!matches.some((formatter) => formatter.id === "biome"), "Biome should be excluded when disabled in settings");
+  });
+});
+
+test("formatter matching: rumdl matches markdown files", async () => {
+  await withTempDir({
+    "docs/guide.md": "# Guide",
+  }, async (dir) => {
+    const matches = getFormatterConfigsForFile(join(dir, "docs/guide.md"), dir);
+    assert(matches.some((formatter) => formatter.id === "rumdl"), "rumdl should match markdown files");
+  });
+});
+
+test("analyzer matching: semgrep matches supported files", async () => {
+  await withTempDir({
+    "src/index.ts": "export const x = 1;",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "src/index.ts"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "semgrep"), "semgrep should match ts files");
+  });
+});
+
+test("analyzer matching: ruff-check matches python files", async () => {
+  await withTempDir({
+    "src/app.py": "print('hello')",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "src/app.py"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "ruff-check"), "ruff-check should match python files");
+  });
+});
+
+test("analyzer matching: golangci-lint matches go files", async () => {
+  await withTempDir({
+    "main.go": "package main",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "main.go"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "golangci-lint"), "golangci-lint should match go files");
+  });
+});
+
+test("analyzer matching: markdownlint matches markdown files", async () => {
+  await withTempDir({
+    "README.md": "# hello",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "README.md"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "markdownlint"), "markdownlint should match markdown files");
+  });
+});
+
+test("analyzer matching: shellcheck matches shell files", async () => {
+  await withTempDir({
+    "script.sh": "echo hi",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "script.sh"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "shellcheck"), "shellcheck should match shell files");
+  });
+});
+
+test("analyzer matching: hadolint matches Dockerfile", async () => {
+  await withTempDir({
+    "Dockerfile": "FROM alpine:latest",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "Dockerfile"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "hadolint"), "hadolint should match Dockerfile");
+  });
+});
+
+test("analyzer matching: project settings can disable semgrep", async () => {
+  await withTempDir({
+    ".pi": null,
+    ".pi/settings.json": JSON.stringify({
+      analyzer: {
+        analyzers: {
+          semgrep: { disabled: true },
+        },
+      },
+    }),
+    "src/index.ts": "export const x = 1;",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "src/index.ts"), dir);
+    assert(!matches.some((analyzer) => analyzer.id === "semgrep"), "semgrep should be excluded when disabled in settings");
   });
 });
 

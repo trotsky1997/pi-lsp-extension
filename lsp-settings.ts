@@ -8,6 +8,7 @@ const envSchema = z.record(z.string(), z.string());
 const pythonProviderSchema = z.enum(["pyright", "basedpyright", "ty"]);
 const hookModeSchema = z.enum(["edit_write", "agent_end", "disabled"]);
 const formatterHookModeSchema = z.enum(["write", "edit_write", "disabled"]);
+const analyzerHookModeSchema = z.enum(["write", "edit_write", "agent_end", "disabled"]);
 
 const lspServerSettingsSchema = z.strictObject({
   disabled: z.boolean().optional(),
@@ -29,6 +30,17 @@ const formatterSettingsSchema = z.strictObject({
   rootMarkers: z.array(z.string().min(1)).optional(),
 });
 
+const analyzerSettingsSchema = z.strictObject({
+  disabled: z.boolean().optional(),
+  command: z.string().min(1).optional(),
+  args: z.array(z.string()).optional(),
+  env: envSchema.optional(),
+  environment: envSchema.optional(),
+  extensions: z.array(z.string().min(1)).optional(),
+  fileNames: z.array(z.string().min(1)).optional(),
+  rootMarkers: z.array(z.string().min(1)).optional(),
+});
+
 const lspSettingsSchema = z.object({
   lsp: z.object({
     enabled: z.boolean().optional(),
@@ -43,13 +55,21 @@ const lspSettingsSchema = z.object({
     hookMode: formatterHookModeSchema.optional(),
     formatters: z.record(z.string(), formatterSettingsSchema).optional(),
   }).passthrough().optional(),
+  analyzer: z.object({
+    enabled: z.boolean().optional(),
+    hookMode: analyzerHookModeSchema.optional(),
+    tools: z.record(z.string(), analyzerSettingsSchema).optional(),
+    analyzers: z.record(z.string(), analyzerSettingsSchema).optional(),
+  }).passthrough().optional(),
 }).passthrough();
 
 export type LSPServerSettings = z.infer<typeof lspServerSettingsSchema>;
 export type FormatterSettings = z.infer<typeof formatterSettingsSchema>;
+export type AnalyzerSettings = z.infer<typeof analyzerSettingsSchema>;
 export type PythonProvider = z.infer<typeof pythonProviderSchema>;
 export type HookMode = z.infer<typeof hookModeSchema>;
 export type FormatterHookMode = z.infer<typeof formatterHookModeSchema>;
+export type AnalyzerHookMode = z.infer<typeof analyzerHookModeSchema>;
 
 export interface ResolvedLSPSettings {
   projectSettingsPath: string;
@@ -61,6 +81,9 @@ export interface ResolvedLSPSettings {
   formatterEnabled: boolean;
   formatterHookMode: FormatterHookMode;
   formatters: Record<string, FormatterSettings>;
+  analyzerEnabled: boolean;
+  analyzerHookMode: AnalyzerHookMode;
+  analyzers: Record<string, AnalyzerSettings>;
 }
 
 interface LoadLspSettingsOptions {
@@ -144,9 +167,22 @@ export function loadResolvedLspSettings(
   const projectFormatters = isPlainObject((projectSettings as { formatter?: { formatters?: unknown } }).formatter?.formatters)
     ? (projectSettings as { formatter?: { formatters?: Record<string, FormatterSettings> } }).formatter?.formatters ?? {}
     : {};
+  const globalAnalyzersSection = (globalSettings as { analyzer?: { analyzers?: unknown; tools?: unknown } }).analyzer;
+  const projectAnalyzersSection = (projectSettings as { analyzer?: { analyzers?: unknown; tools?: unknown } }).analyzer;
+  const globalAnalyzers = isPlainObject(globalAnalyzersSection?.analyzers)
+    ? (globalAnalyzersSection?.analyzers as Record<string, AnalyzerSettings>)
+    : isPlainObject(globalAnalyzersSection?.tools)
+      ? (globalAnalyzersSection?.tools as Record<string, AnalyzerSettings>)
+      : {};
+  const projectAnalyzers = isPlainObject(projectAnalyzersSection?.analyzers)
+    ? (projectAnalyzersSection?.analyzers as Record<string, AnalyzerSettings>)
+    : isPlainObject(projectAnalyzersSection?.tools)
+      ? (projectAnalyzersSection?.tools as Record<string, AnalyzerSettings>)
+      : {};
 
   const servers = mergeRecordSettings(globalServers, projectServers);
   const formatters = mergeRecordSettings(globalFormatters, projectFormatters);
+  const analyzers = mergeRecordSettings(globalAnalyzers, projectAnalyzers);
 
   const globalHookMode = (globalSettings as { lsp?: { hookMode?: HookMode } }).lsp?.hookMode;
   const projectHookMode = (projectSettings as { lsp?: { hookMode?: HookMode } }).lsp?.hookMode;
@@ -158,6 +194,10 @@ export function loadResolvedLspSettings(
   const projectFormatterEnabled = (projectSettings as { formatter?: { enabled?: boolean } }).formatter?.enabled;
   const globalFormatterHookMode = (globalSettings as { formatter?: { hookMode?: FormatterHookMode } }).formatter?.hookMode;
   const projectFormatterHookMode = (projectSettings as { formatter?: { hookMode?: FormatterHookMode } }).formatter?.hookMode;
+  const globalAnalyzerEnabled = (globalSettings as { analyzer?: { enabled?: boolean } }).analyzer?.enabled;
+  const projectAnalyzerEnabled = (projectSettings as { analyzer?: { enabled?: boolean } }).analyzer?.enabled;
+  const globalAnalyzerHookMode = (globalSettings as { analyzer?: { hookMode?: AnalyzerHookMode } }).analyzer?.hookMode;
+  const projectAnalyzerHookMode = (projectSettings as { analyzer?: { hookMode?: AnalyzerHookMode } }).analyzer?.hookMode;
 
   return {
     globalSettingsPath,
@@ -169,5 +209,8 @@ export function loadResolvedLspSettings(
     formatterEnabled: projectFormatterEnabled ?? globalFormatterEnabled ?? true,
     formatterHookMode: projectFormatterHookMode ?? globalFormatterHookMode ?? "write",
     formatters,
+    analyzerEnabled: projectAnalyzerEnabled ?? globalAnalyzerEnabled ?? true,
+    analyzerHookMode: projectAnalyzerHookMode ?? globalAnalyzerHookMode ?? "agent_end",
+    analyzers,
   };
 }

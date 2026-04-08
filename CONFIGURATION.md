@@ -2,6 +2,12 @@
 
 `lsp-pi` is configured entirely through Pi settings files.
 
+It supports three parallel domains:
+
+- `lsp` for language servers
+- `formatter` for format-on-write tools
+- `analyzer` for non-LSP diagnostic tools such as `semgrep`
+
 ## Settings files
 
 - Global: `~/.pi/agent/settings.json`
@@ -57,6 +63,17 @@ Project settings override global settings.
         "args": ["format", "src/app.py"]
       }
     }
+  },
+  "analyzer": {
+    "enabled": true,
+    "hookMode": "agent_end",
+    "tools": {
+      "semgrep": {
+        "command": "semgrep",
+        "args": ["scan", "--json", "--quiet", "--config=auto"],
+        "extensions": [".js", ".ts", ".py"]
+      }
+    }
   }
 }
 ```
@@ -88,9 +105,30 @@ Each entry under `lsp.servers.<serverId>` supports:
 - `hookMode: "write" | "edit_write" | "disabled"`
 - `formatters: Record<string, FormatterSettings>`
 
+## Top-level `analyzer` keys
+
+- `enabled: boolean`
+- `hookMode: "write" | "edit_write" | "agent_end" | "disabled"`
+- `tools: Record<string, AnalyzerSettings>`
+- `analyzers: Record<string, AnalyzerSettings>`
+
+`tools` and `analyzers` are both accepted; they resolve to the same internal registry.
+
 ## Per-formatter keys
 
 Each entry under `formatter.formatters.<formatterId>` supports:
+
+- `disabled: boolean`
+- `command: string`
+- `args: string[]`
+- `env: Record<string, string>`
+- `environment: Record<string, string>`
+- `extensions: string[]`
+- `rootMarkers: string[]`
+
+## Per-analyzer keys
+
+Each entry under `analyzer.tools.<analyzerId>` or `analyzer.analyzers.<analyzerId>` supports:
 
 - `disabled: boolean`
 - `command: string`
@@ -121,6 +159,7 @@ Each entry under `formatter.formatters.<formatterId>` supports:
 - `julials`
 - `kotlin`
 - `lua-ls`
+- `markdown`
 - `nixd`
 - `ocaml-lsp`
 - `oxlint`
@@ -158,6 +197,7 @@ Each entry under `formatter.formatters.<formatterId>` supports:
 - `ormolu`
 - `pint`
 - `prettier`
+- `rumdl`
 - `ruff`
 - `rubocop`
 - `rustfmt`
@@ -167,6 +207,15 @@ Each entry under `formatter.formatters.<formatterId>` supports:
 - `uv`
 - `zig`
 
+## Built-in analyzer IDs
+
+- `golangci-lint`
+- `hadolint`
+- `markdownlint`
+- `ruff-check`
+- `semgrep`
+- `shellcheck`
+
 ## Merge rules
 
 Global and project settings are merged with these rules:
@@ -174,6 +223,7 @@ Global and project settings are merged with these rules:
 - scalars such as `command`, `disabled`, `hookMode`, and `provider` are overridden by project settings
 - arrays such as `args`, `rootMarkers`, and `extensions` are replaced by project settings
 - objects such as `env`, `environment`, `initializationOptions`, and `workspaceConfiguration` are deep-merged
+- analyzer object settings are merged with the same scalar/array/object rules
 
 ## Examples
 
@@ -253,6 +303,31 @@ Global and project settings are merged with these rules:
   }
 }
 ```
+
+### Enable Semgrep analyzer at agent end
+
+```json
+{
+  "analyzer": {
+    "hookMode": "agent_end",
+    "tools": {
+      "semgrep": {
+        "command": "semgrep",
+        "args": ["scan", "--json", "--quiet", "--config=auto"]
+      }
+    }
+  }
+}
+```
+
+### Common analyzer-style tools supported out of the box
+
+- `semgrep` for multi-language rule scanning
+- `ruff-check` for Python
+- `golangci-lint` for Go
+- `markdownlint` for Markdown
+- `shellcheck` for shell scripts
+- `hadolint` for `Dockerfile`
 
 ## Notes
 

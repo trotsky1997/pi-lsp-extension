@@ -157,6 +157,7 @@ const JS_LIKE_EXTENSIONS = [
 export const FORMATTERS: FormatterConfig[] = [
   nodeBinaryFormatter("biome", JS_LIKE_EXTENSIONS, "biome", (file) => ["format", "--write", file], ["biome.json", "biome.jsonc", "package.json"]),
   nodeBinaryFormatter("prettier", JS_LIKE_EXTENSIONS, "prettier", (file) => ["--write", file], ["package.json", ".prettierrc", ".prettierrc.json", "prettier.config.js", "prettier.config.cjs", "prettier.config.mjs"]),
+  directBinaryFormatter("rumdl", [".md", ".mdx"], "rumdl", (file) => ["fmt", file]),
   directBinaryFormatter("ruff", [".py", ".pyi"], "ruff", (file) => ["format", file], ["pyproject.toml", "ruff.toml"]),
   directBinaryFormatter("uv", [".py", ".pyi"], "uv", (file) => ["tool", "run", "ruff", "format", file], ["pyproject.toml", "uv.lock"]),
   directBinaryFormatter("gofmt", [".go"], "gofmt", (file) => ["-w", file], ["go.mod", "go.work"]),
