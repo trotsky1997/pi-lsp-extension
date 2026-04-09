@@ -256,6 +256,34 @@ export function extractApplyPatchPaths(patch: string): string[] {
   return [...new Set(paths.filter(Boolean))];
 }
 
+function normalizeShellTarget(token: string): string | undefined {
+  const trimmed = token.trim();
+  if (!trimmed || trimmed.startsWith("&")) return undefined;
+
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed.replace(/\\([\\\s'"$`])/g, "$1");
+}
+
+export function extractBashRedirectionPaths(command: string): string[] {
+  const paths: string[] = [];
+  const commandPattern = /(?:^|&&|\|\||;)\s*(?:cat|echo|printf|tee)\b.*?(?<!\d)(?:>>|>)\s*("[^"]+"|'[^']+'|[^\s<>&;|]+)/g;
+
+  for (const line of command.split(/\r?\n/)) {
+    for (const match of line.matchAll(commandPattern)) {
+      const target = normalizeShellTarget(match[1] ?? "");
+      if (target) paths.push(target);
+    }
+  }
+
+  return [...new Set(paths)];
+}
+
 interface PendingDiagnosticState {
   includeWarnings: boolean;
   lastTouchedAt: number;
@@ -655,6 +683,10 @@ export default function (pi: ExtensionAPI) {
       return extractApplyPatchPaths(patch);
     }
 
+    if (toolName === "bash" && typeof input.command === "string") {
+      return extractBashRedirectionPaths(input.command);
+    }
+
     const filePath = typeof input.path === "string" ? input.path : undefined;
     return filePath ? [filePath] : [];
   }
@@ -663,6 +695,7 @@ export default function (pi: ExtensionAPI) {
     return toolName === "write"
       || toolName === "edit"
       || toolName === "apply_patch"
+      || (toolName === "bash" && typeof input.command === "string" && extractBashRedirectionPaths(input.command).length > 0)
       || typeof input.patch === "string";
   }
 

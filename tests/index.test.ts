@@ -35,7 +35,7 @@ import {
   formatWorkspaceSymbolResult,
 } from "../lsp-tool-formatters.js";
 import { safeParseLspToolInput } from "../lsp-tool-schemas.js";
-import { extractApplyPatchPaths, selectPendingDiagnosticsForConfig } from "../lsp.js";
+import { extractApplyPatchPaths, extractBashRedirectionPaths, selectPendingDiagnosticsForConfig } from "../lsp.js";
 
 // ============================================================================
 // uriToPath tests
@@ -218,6 +218,31 @@ test("selectPendingDiagnosticsForConfig: drops stale files", () => {
   assertEqual(result, [
     { filePath: "/workspace/app/src/fresh.ts", includeWarnings: false },
   ]);
+});
+
+test("extractBashRedirectionPaths: finds cat overwrite and append targets", () => {
+  const result = extractBashRedirectionPaths(`mkdir -p src && cat > src/index.ts <<'EOF'
+export const broken = ;
+EOF
+cat >> src/index.ts <<'EOF'
+console.log(broken);
+EOF`);
+
+  assertEqual(result, ["src/index.ts"]);
+});
+
+test("extractBashRedirectionPaths: finds append targets from echo and printf", () => {
+  const result = extractBashRedirectionPaths(`echo "export const broken = ;" >> src/index.ts
+printf 'console.log(broken);\n' >> "src/index.ts"`);
+
+  assertEqual(result, ["src/index.ts"]);
+});
+
+test("extractBashRedirectionPaths: ignores stderr redirects", () => {
+  const result = extractBashRedirectionPaths(`cat src/index.ts 2> errors.log
+echo ok 1> stdout.log`);
+
+  assertEqual(result, []);
 });
 
 // ============================================================================
