@@ -53,7 +53,7 @@ import {
 } from "vscode-languageserver-protocol";
 import { loadResolvedLspSettings, type LSPServerSettings, type PythonProvider, type ResolvedLSPSettings } from "./lsp-settings.js";
 import { getDevDocsHover } from "./devdocs-core.js";
-import { getOrCreateTreeSitterManager } from "./tree-sitter-core.js";
+import { getOrCreateTreeSitterManager } from "./tree-sitter-wasm-core.js";
 
 // Config
 const INIT_TIMEOUT_MS = 30000;

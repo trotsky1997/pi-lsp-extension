@@ -20,7 +20,7 @@ import { LSPManager, LSP_SERVERS, LANGUAGE_IDS } from "../lsp-core.js";
 import { loadResolvedLspSettings } from "../lsp-settings.js";
 import { resolveLspUiState } from "../lsp.js";
 import { extractDevDocsSymbolAtPosition, findBestDevDocsEntry, resetDevDocsCache, selectDevDocsDocsets } from "../devdocs-core.js";
-import { TreeSitterManager } from "../tree-sitter-core.js";
+import { TreeSitterManager } from "../tree-sitter-wasm-core.js";
 
 // ============================================================================
 // Test utilities
