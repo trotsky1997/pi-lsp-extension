@@ -123,7 +123,7 @@ Common keys:
 - Python AI-code-quality scans: optionally add analyzer `sloppylint`
 - Go: `gopls`, formatter `gofmt`, analyzer `golangci-lint`
 - Rust: `rust-analyzer`, formatter `rustfmt`
-- Markdown: `markdown`, formatter `rumdl`, analyzer `markdownlint`
+- Markdown: `markdown` via `markdown-oxide`, formatter `rumdl`, analyzer `markdownlint`
 - Markdown broken-link checks: optionally add analyzer `lychee`
 - Markdown / prose-heavy docs: optionally add analyzer `slopgrep`
 - LaTeX: `texlab`, and optionally analyzer `slopgrep`

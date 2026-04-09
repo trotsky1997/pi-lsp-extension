@@ -13,6 +13,7 @@ import {
   type DocumentHighlight,
   type DocumentSymbol,
   type FoldingRange,
+  type Hover,
   type Location,
   type SymbolInformation,
 } from "vscode-languageserver-protocol";
@@ -21,6 +22,7 @@ export type TreeSitterOperation =
   | "diagnostics"
   | "goToDefinition"
   | "findReferences"
+  | "hover"
   | "documentSymbol"
   | "workspaceSymbol"
   | "documentHighlight"
@@ -103,6 +105,7 @@ const SUPPORTED_OPERATIONS = new Set<TreeSitterOperation>([
   "diagnostics",
   "goToDefinition",
   "findReferences",
+  "hover",
   "documentSymbol",
   "workspaceSymbol",
   "documentHighlight",
@@ -110,6 +113,7 @@ const SUPPORTED_OPERATIONS = new Set<TreeSitterOperation>([
 ]);
 
 const MAX_WORKSPACE_SYMBOL_FILES = 400;
+const MARKDOWN_EXTENSIONS = new Set([".md", ".mdx"]);
 const IGNORED_WORKSPACE_DIRS = new Set([
   ".git",
   ".hg",
@@ -129,6 +133,68 @@ function sanitizeQuerySource(source: string): string {
     .split(/\r?\n/)
     .filter((line) => !line.includes("#strip!") && !line.includes("#select-adjacent!"))
     .join("\n");
+}
+
+interface MarkdownHeading {
+  level: number;
+  text: string;
+  line: number;
+  startCharacter: number;
+  endCharacter: number;
+  endLine: number;
+}
+
+interface MarkdownFence {
+  startLine: number;
+  endLine: number;
+}
+
+interface MarkdownReferenceDefinition {
+  label: string;
+  url: string;
+  line: number;
+  labelStartCharacter: number;
+  labelEndCharacter: number;
+  urlStartCharacter: number;
+  urlEndCharacter: number;
+}
+
+interface MarkdownReferenceUsage {
+  label: string;
+  line: number;
+  startCharacter: number;
+  endCharacter: number;
+}
+
+interface MarkdownInlineLink {
+  target: string;
+  line: number;
+  startCharacter: number;
+  endCharacter: number;
+}
+
+interface ParsedMarkdownFile {
+  absPath: string;
+  lines: string[];
+  headings: MarkdownHeading[];
+  fences: MarkdownFence[];
+  referenceDefinitions: MarkdownReferenceDefinition[];
+  referenceUsages: MarkdownReferenceUsage[];
+  inlineLinks: MarkdownInlineLink[];
+}
+
+function isMarkdownFile(filePath: string): boolean {
+  return MARKDOWN_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+}
+
+function markdownSupportsOperation(operation: string): boolean {
+  return operation === "goToDefinition"
+    || operation === "findReferences"
+    || operation === "hover"
+    || operation === "documentHighlight"
+    || operation === "documentSymbol"
+    || operation === "workspaceSymbol"
+    || operation === "foldingRange";
 }
 
 function getLanguageConfig(filePath: string): LanguageConfig | undefined {
@@ -184,6 +250,251 @@ function nodeToLocation(absPath: string, node: Parser.SyntaxNode): Location {
   };
 }
 
+function markdownSelectionRange(line: number, startCharacter: number, endCharacter: number) {
+  return {
+    start: { line, character: startCharacter },
+    end: { line, character: endCharacter },
+  };
+}
+
+function markdownRange(lines: string[], heading: MarkdownHeading) {
+  return {
+    start: { line: heading.line, character: 0 },
+    end: {
+      line: heading.endLine,
+      character: lines[heading.endLine]?.length ?? 0,
+    },
+  };
+}
+
+function markdownSymbolKind(): SymbolKind {
+  return SymbolKind.Namespace;
+}
+
+function normalizeMarkdownLabel(label: string): string {
+  return label.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function slugifyMarkdownHeading(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/<[^>]+>/g, "")
+    .replace(/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-");
+}
+
+function markdownLocation(absPath: string, line: number, startCharacter: number, endCharacter: number): Location {
+  return {
+    uri: pathToFileURL(absPath).href,
+    range: markdownSelectionRange(line, startCharacter, endCharacter),
+  };
+}
+
+function isMarkdownPosition(line: number, character: number, targetLine: number, startCharacter: number, endCharacter: number): boolean {
+  return line - 1 === targetLine && character - 1 >= startCharacter && character - 1 <= endCharacter;
+}
+
+function markdownHover(value: string): Hover {
+  return {
+    contents: {
+      kind: "markdown",
+      value,
+    },
+  };
+}
+
+function cleanMarkdownLinkTarget(target: string): string {
+  const trimmed = target.trim();
+  const withoutTitle = trimmed.match(/^<([^>]+)>$/)?.[1]
+    ?? trimmed.match(/^([^\s]+)(?:\s+.+)?$/)?.[1]
+    ?? trimmed;
+  return withoutTitle;
+}
+
+function uniqLocations(locations: Location[]): Location[] {
+  const seen = new Set<string>();
+  return locations.filter((location) => {
+    const key = `${location.uri}:${location.range.start.line}:${location.range.start.character}:${location.range.end.line}:${location.range.end.character}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function parseMarkdownFile(filePath: string): ParsedMarkdownFile | null {
+  const absPath = path.resolve(filePath);
+  if (!isMarkdownFile(absPath)) return null;
+
+  let source: string;
+  try {
+    source = fs.readFileSync(absPath, "utf-8");
+  } catch {
+    return null;
+  }
+
+  const lines = source.split(/\r?\n/);
+  const headings: MarkdownHeading[] = [];
+  const fences: MarkdownFence[] = [];
+  const referenceDefinitions: MarkdownReferenceDefinition[] = [];
+  const referenceUsages: MarkdownReferenceUsage[] = [];
+  const inlineLinks: MarkdownInlineLink[] = [];
+  let activeFence: { marker: string; length: number; startLine: number } | null = null;
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] ?? "";
+
+    const fenceMatch = line.match(/^\s{0,3}(```+|~~~+)/);
+    if (fenceMatch) {
+      const marker = fenceMatch[1]![0]!;
+      const length = fenceMatch[1]!.length;
+      if (!activeFence) {
+        activeFence = { marker, length, startLine: index };
+        continue;
+      }
+      if (activeFence.marker === marker && length >= activeFence.length) {
+        fences.push({ startLine: activeFence.startLine, endLine: index });
+        activeFence = null;
+      }
+      continue;
+    }
+
+    if (activeFence) continue;
+
+    const atxMatch = line.match(/^(\s{0,3})(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/);
+    if (atxMatch) {
+      const prefix = atxMatch[1] ?? "";
+      const hashes = atxMatch[2] ?? "#";
+      const text = (atxMatch[3] ?? "").trim();
+      if (!text) continue;
+      const startCharacter = prefix.length + hashes.length + 1;
+      headings.push({
+        level: hashes.length,
+        text,
+        line: index,
+        startCharacter,
+        endCharacter: startCharacter + text.length,
+        endLine: index,
+      });
+      continue;
+    }
+
+    const nextLine = lines[index + 1] ?? "";
+    const setextMatch = nextLine.match(/^\s{0,3}(=+|-+)\s*$/);
+    if (setextMatch && line.trim()) {
+      const startCharacter = line.search(/\S|$/);
+      const text = line.trim();
+      headings.push({
+        level: setextMatch[1]![0] === "=" ? 1 : 2,
+        text,
+        line: index,
+        startCharacter,
+        endCharacter: startCharacter + text.length,
+        endLine: index + 1,
+      });
+      index += 1;
+      continue;
+    }
+
+    const referenceDefinitionMatch = line.match(/^\s{0,3}\[([^\]]+)\]:\s*(\S+)/);
+    if (referenceDefinitionMatch) {
+      const label = referenceDefinitionMatch[1] ?? "";
+      const url = cleanMarkdownLinkTarget(referenceDefinitionMatch[2] ?? "");
+      const labelStartCharacter = line.indexOf("[") + 1;
+      const labelEndCharacter = labelStartCharacter + label.length;
+      const urlStartCharacter = line.indexOf(referenceDefinitionMatch[2] ?? url, labelEndCharacter);
+      referenceDefinitions.push({
+        label: normalizeMarkdownLabel(label),
+        url,
+        line: index,
+        labelStartCharacter,
+        labelEndCharacter,
+        urlStartCharacter: Math.max(0, urlStartCharacter),
+        urlEndCharacter: Math.max(0, urlStartCharacter) + url.length,
+      });
+    }
+
+    for (const match of line.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
+      const whole = match[0] ?? "";
+      const rawTarget = cleanMarkdownLinkTarget(match[1] ?? "");
+      const startCharacter = (match.index ?? 0) + whole.indexOf("(") + 1;
+      inlineLinks.push({
+        target: rawTarget,
+        line: index,
+        startCharacter,
+        endCharacter: startCharacter + rawTarget.length,
+      });
+    }
+
+    for (const match of line.matchAll(/\[[^\]]+\]\[([^\]]+)\]/g)) {
+      const whole = match[0] ?? "";
+      const rawLabel = match[1] ?? "";
+      const startCharacter = (match.index ?? 0) + whole.lastIndexOf("[") + 1;
+      referenceUsages.push({
+        label: normalizeMarkdownLabel(rawLabel),
+        line: index,
+        startCharacter,
+        endCharacter: startCharacter + rawLabel.length,
+      });
+    }
+  }
+
+  const lastContentLine = (() => {
+    for (let index = lines.length - 1; index >= 0; index--) {
+      if ((lines[index] ?? "").trim()) return index;
+    }
+    return 0;
+  })();
+
+  for (let index = 0; index < headings.length; index++) {
+    const heading = headings[index]!;
+    const nextBoundary = headings.slice(index + 1).find((candidate) => candidate.level <= heading.level);
+    heading.endLine = Math.max(heading.line, Math.min(nextBoundary ? nextBoundary.line - 1 : lastContentLine, lastContentLine));
+  }
+
+  return { absPath, lines, headings, fences, referenceDefinitions, referenceUsages, inlineLinks };
+}
+
+function findMarkdownHeadingAtPosition(parsed: ParsedMarkdownFile, line: number, character: number): MarkdownHeading | undefined {
+  return parsed.headings.find((heading) => isMarkdownPosition(line, character, heading.line, heading.startCharacter, heading.endCharacter));
+}
+
+function findMarkdownInlineLinkAtPosition(parsed: ParsedMarkdownFile, line: number, character: number): MarkdownInlineLink | undefined {
+  return parsed.inlineLinks.find((link) => isMarkdownPosition(line, character, link.line, link.startCharacter, link.endCharacter));
+}
+
+function findMarkdownReferenceUsageAtPosition(parsed: ParsedMarkdownFile, line: number, character: number): MarkdownReferenceUsage | undefined {
+  return parsed.referenceUsages.find((usage) => isMarkdownPosition(line, character, usage.line, usage.startCharacter, usage.endCharacter));
+}
+
+function findMarkdownReferenceDefinitionAtPosition(parsed: ParsedMarkdownFile, line: number, character: number): MarkdownReferenceDefinition | undefined {
+  return parsed.referenceDefinitions.find((definition) =>
+    isMarkdownPosition(line, character, definition.line, definition.labelStartCharacter, definition.labelEndCharacter)
+    || isMarkdownPosition(line, character, definition.line, definition.urlStartCharacter, definition.urlEndCharacter));
+}
+
+function findMarkdownHeadingBySlug(parsed: ParsedMarkdownFile, slug: string): MarkdownHeading | undefined {
+  const normalizedSlug = slug.replace(/^#/, "").toLowerCase();
+  return parsed.headings.find((heading) => slugifyMarkdownHeading(heading.text) === normalizedSlug);
+}
+
+function markdownHeadingLocation(parsed: ParsedMarkdownFile, heading: MarkdownHeading): Location {
+  return markdownLocation(parsed.absPath, heading.line, heading.startCharacter, heading.endCharacter);
+}
+
+function markdownReferenceDefinitionLocation(parsed: ParsedMarkdownFile, definition: MarkdownReferenceDefinition): Location {
+  return markdownLocation(parsed.absPath, definition.line, definition.labelStartCharacter, definition.labelEndCharacter);
+}
+
+function markdownReferenceUsageLocation(parsed: ParsedMarkdownFile, usage: MarkdownReferenceUsage): Location {
+  return markdownLocation(parsed.absPath, usage.line, usage.startCharacter, usage.endCharacter);
+}
+
+function markdownInlineLinkLocation(parsed: ParsedMarkdownFile, link: MarkdownInlineLink): Location {
+  return markdownLocation(parsed.absPath, link.line, link.startCharacter, link.endCharacter);
+}
+
 function shouldSkipWorkspaceDir(dirName: string): boolean {
   return IGNORED_WORKSPACE_DIRS.has(dirName);
 }
@@ -218,7 +529,7 @@ function collectWorkspaceFiles(rootPath: string, limit = MAX_WORKSPACE_SYMBOL_FI
         if (!shouldSkipWorkspaceDir(entry.name)) stack.push(fullPath);
         continue;
       }
-      if (entry.isFile() && getLanguageConfig(fullPath)) files.push(fullPath);
+      if (entry.isFile() && (getLanguageConfig(fullPath) || isMarkdownFile(fullPath))) files.push(fullPath);
     }
   }
 
@@ -296,6 +607,7 @@ export class TreeSitterManager {
   private queries = new Map<string, Parser.Query | null>();
 
   supportsOperation(filePath: string, operation: string): boolean {
+    if (isMarkdownFile(filePath)) return markdownSupportsOperation(operation);
     const config = getLanguageConfig(filePath);
     if (!config) return false;
     return SUPPORTED_OPERATIONS.has(operation as TreeSitterOperation);
@@ -441,6 +753,38 @@ export class TreeSitterManager {
   }
 
   getDocumentSymbols(filePath: string): DocumentSymbol[] {
+    const markdown = parseMarkdownFile(filePath);
+    if (markdown) {
+      const roots: Array<DocumentSymbol & { _level?: number }> = [];
+      const stack: Array<DocumentSymbol & { _level?: number }> = [];
+
+      for (const heading of markdown.headings) {
+        const symbol: DocumentSymbol & { _level?: number } = {
+          name: heading.text,
+          kind: markdownSymbolKind(),
+          range: markdownRange(markdown.lines, heading),
+          selectionRange: markdownSelectionRange(heading.line, heading.startCharacter, heading.endCharacter),
+          children: [],
+          _level: heading.level,
+        };
+
+        while (stack.length > 0 && (stack[stack.length - 1]!._level ?? 0) >= heading.level) stack.pop();
+        if (stack.length === 0) roots.push(symbol);
+        else stack[stack.length - 1]!.children!.push(symbol);
+        stack.push(symbol);
+      }
+
+      const stripLevel = (symbols: Array<DocumentSymbol & { _level?: number }>): DocumentSymbol[] => symbols.map((symbol) => ({
+        name: symbol.name,
+        kind: symbol.kind,
+        range: symbol.range,
+        selectionRange: symbol.selectionRange,
+        children: stripLevel((symbol.children as Array<DocumentSymbol & { _level?: number }> | undefined) ?? []),
+      }));
+
+      return stripLevel(roots);
+    }
+
     const parsed = this.parseFile(filePath);
     if (!parsed) return [];
 
@@ -468,6 +812,23 @@ export class TreeSitterManager {
     const symbols: SymbolInformation[] = [];
 
     for (const filePath of collectWorkspaceFiles(rootPath)) {
+      const markdown = parseMarkdownFile(filePath);
+      if (markdown) {
+        for (const heading of markdown.headings) {
+          if (needle && !heading.text.toLowerCase().includes(needle)) continue;
+          symbols.push({
+            name: heading.text,
+            kind: markdownSymbolKind(),
+            location: {
+              uri: pathToFileURL(markdown.absPath).href,
+              range: markdownSelectionRange(heading.line, heading.startCharacter, heading.endCharacter),
+            },
+            containerName: path.relative(path.dirname(path.resolve(rootPath)), markdown.absPath),
+          });
+        }
+        continue;
+      }
+
       const parsed = this.parseFile(filePath);
       if (!parsed) continue;
 
@@ -493,6 +854,26 @@ export class TreeSitterManager {
   }
 
   getFoldingRanges(filePath: string): FoldingRange[] {
+    const markdown = parseMarkdownFile(filePath);
+    if (markdown) {
+      const ranges = [
+        ...markdown.headings
+          .filter((heading) => heading.endLine > heading.line)
+          .map((heading) => ({ startLine: heading.line, endLine: heading.endLine })),
+        ...markdown.fences
+          .filter((fence) => fence.endLine > fence.startLine)
+          .map((fence) => ({ startLine: fence.startLine, endLine: fence.endLine })),
+      ];
+
+      const seen = new Set<string>();
+      return ranges.filter((range) => {
+        const key = `${range.startLine}:${range.endLine}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
     const parsed = this.parseFile(filePath);
     if (!parsed) return [];
 
@@ -520,6 +901,39 @@ export class TreeSitterManager {
   }
 
   getDocumentHighlights(filePath: string, line: number, character: number): DocumentHighlight[] {
+    const markdown = parseMarkdownFile(filePath);
+    if (markdown) {
+      const heading = findMarkdownHeadingAtPosition(markdown, line, character);
+      if (heading) {
+        const references = [
+          markdownHeadingLocation(markdown, heading),
+          ...markdown.inlineLinks
+            .filter((link) => link.target.startsWith("#") && slugifyMarkdownHeading(heading.text) === link.target.slice(1).toLowerCase())
+            .map((link) => markdownInlineLinkLocation(markdown, link)),
+        ];
+        return references.map((location, index) => ({
+          range: location.range,
+          kind: index === 0 ? DocumentHighlightKind.Write : DocumentHighlightKind.Read,
+        }));
+      }
+
+      const definition = findMarkdownReferenceDefinitionAtPosition(markdown, line, character);
+      const usage = definition ? undefined : findMarkdownReferenceUsageAtPosition(markdown, line, character);
+      const label = definition?.label ?? usage?.label;
+      if (label) {
+        const locations = uniqLocations([
+          ...markdown.referenceDefinitions.filter((item) => item.label === label).map((item) => markdownReferenceDefinitionLocation(markdown, item)),
+          ...markdown.referenceUsages.filter((item) => item.label === label).map((item) => markdownReferenceUsageLocation(markdown, item)),
+        ]);
+        return locations.map((location, index) => ({
+          range: location.range,
+          kind: index === 0 ? DocumentHighlightKind.Write : DocumentHighlightKind.Read,
+        }));
+      }
+
+      return [];
+    }
+
     const parsed = this.parseFile(filePath);
     if (!parsed) return [];
 
@@ -553,6 +967,26 @@ export class TreeSitterManager {
   }
 
   getDefinition(filePath: string, line: number, character: number): Location[] {
+    const markdown = parseMarkdownFile(filePath);
+    if (markdown) {
+      const link = findMarkdownInlineLinkAtPosition(markdown, line, character);
+      if (link?.target.startsWith("#")) {
+        const heading = findMarkdownHeadingBySlug(markdown, link.target);
+        return heading ? [markdownHeadingLocation(markdown, heading)] : [];
+      }
+
+      const usage = findMarkdownReferenceUsageAtPosition(markdown, line, character);
+      if (usage) {
+        return markdown.referenceDefinitions
+          .filter((definition) => definition.label === usage.label)
+          .map((definition) => markdownReferenceDefinitionLocation(markdown, definition));
+      }
+
+      const definition = findMarkdownReferenceDefinitionAtPosition(markdown, line, character);
+      if (definition) return [markdownReferenceDefinitionLocation(markdown, definition)];
+      return [];
+    }
+
     const parsed = this.parseFile(filePath);
     if (!parsed) return [];
 
@@ -577,6 +1011,44 @@ export class TreeSitterManager {
   }
 
   getReferences(filePath: string, line: number, character: number): Location[] {
+    const markdown = parseMarkdownFile(filePath);
+    if (markdown) {
+      const heading = findMarkdownHeadingAtPosition(markdown, line, character);
+      if (heading) {
+        return uniqLocations([
+          markdownHeadingLocation(markdown, heading),
+          ...markdown.inlineLinks
+            .filter((link) => link.target.startsWith("#") && slugifyMarkdownHeading(heading.text) === link.target.slice(1).toLowerCase())
+            .map((link) => markdownInlineLinkLocation(markdown, link)),
+        ]);
+      }
+
+      const link = findMarkdownInlineLinkAtPosition(markdown, line, character);
+      if (link?.target.startsWith("#")) {
+        const targetHeading = findMarkdownHeadingBySlug(markdown, link.target);
+        return targetHeading
+          ? uniqLocations([
+            markdownHeadingLocation(markdown, targetHeading),
+            ...markdown.inlineLinks
+              .filter((item) => item.target === link.target)
+              .map((item) => markdownInlineLinkLocation(markdown, item)),
+          ])
+          : [markdownInlineLinkLocation(markdown, link)];
+      }
+
+      const definition = findMarkdownReferenceDefinitionAtPosition(markdown, line, character);
+      const usage = definition ? undefined : findMarkdownReferenceUsageAtPosition(markdown, line, character);
+      const label = definition?.label ?? usage?.label;
+      if (label) {
+        return uniqLocations([
+          ...markdown.referenceDefinitions.filter((item) => item.label === label).map((item) => markdownReferenceDefinitionLocation(markdown, item)),
+          ...markdown.referenceUsages.filter((item) => item.label === label).map((item) => markdownReferenceUsageLocation(markdown, item)),
+        ]);
+      }
+
+      return [];
+    }
+
     const parsed = this.parseFile(filePath);
     if (!parsed) return [];
 
@@ -606,6 +1078,37 @@ export class TreeSitterManager {
       seen.add(key);
       return true;
     });
+  }
+
+  getHover(filePath: string, line: number, character: number): Hover | null {
+    const markdown = parseMarkdownFile(filePath);
+    if (markdown) {
+      const link = findMarkdownInlineLinkAtPosition(markdown, line, character);
+      if (link) {
+        if (link.target.startsWith("#")) {
+          const heading = findMarkdownHeadingBySlug(markdown, link.target);
+          if (heading) return markdownHover(`**Heading**\n\n${heading.text}`);
+          return markdownHover(`**Fragment**\n\n${link.target}\n\n*Heading not found*`);
+        }
+        if (/^[a-z]+:/i.test(link.target)) return markdownHover(`**External link**\n\n${link.target}`);
+        return markdownHover(`**Local link**\n\n${link.target}`);
+      }
+
+      const definition = findMarkdownReferenceDefinitionAtPosition(markdown, line, character);
+      const usage = definition ? undefined : findMarkdownReferenceUsageAtPosition(markdown, line, character);
+      const label = definition?.label ?? usage?.label;
+      if (label) {
+        const target = markdown.referenceDefinitions.find((item) => item.label === label);
+        if (target) {
+          const prefix = /^[a-z]+:/i.test(target.url) ? "**External link**" : "**Reference link**";
+          return markdownHover(`${prefix}\n\n${target.url}`);
+        }
+      }
+
+      return null;
+    }
+
+    return null;
   }
 }
 

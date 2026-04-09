@@ -151,6 +151,46 @@ test("typescript: valid code has no errors", async () => {
   }
 });
 
+test("markdown: markdown-oxide provides navigation and symbols", async () => {
+  if (!commandExists("markdown-oxide")) {
+    skip("markdown-oxide not installed");
+  }
+
+  const dir = await mkdtemp(join(tmpdir(), "lsp-md-"));
+  const manager = new LSPManager(dir);
+
+  try {
+    const file = join(dir, "README.md");
+    const notes = join(dir, "notes.md");
+    await writeFile(file, "# Home\n\nSee [Details](./notes.md#details).\n");
+    await writeFile(notes, "# Notes\n\n## Details\n\nBody\n");
+
+    const definitions = await manager.getDefinition(file, 3, 23);
+    assert(definitions.length > 0, "Expected markdown-oxide definition result for markdown link");
+    assert(
+      definitions.some((location) => location.uri.endsWith("notes.md") && location.range.start.line >= 0),
+      `Expected definition to resolve into notes.md, got: ${JSON.stringify(definitions)}`,
+    );
+
+    const references = await manager.getReferences(notes, 3, 5);
+    assert(references.length > 0, "Expected markdown-oxide references for heading");
+    assert(
+      references.some((location) => location.uri.endsWith("README.md")),
+      `Expected a backlink reference from README.md, got: ${JSON.stringify(references)}`,
+    );
+
+    const symbols = await manager.getDocumentSymbols(notes);
+    assert(symbols.length > 0, "Expected markdown-oxide document symbols");
+    assert(
+      symbols.some((symbol) => symbol.name === "Notes" && symbol.children?.some((child) => child.name === "Details")),
+      `Expected heading symbol hierarchy Notes -> Details, got: ${JSON.stringify(symbols.map((symbol) => ({ name: symbol.name, children: symbol.children?.map((child) => child.name) ?? [] })))}`,
+    );
+  } finally {
+    await manager.shutdown();
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 // ============================================================================
 // Dart
 // ============================================================================

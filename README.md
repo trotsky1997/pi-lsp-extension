@@ -174,6 +174,7 @@ npm i -g yaml-language-server bash-language-server
 uv tool install semgrep
 uv tool install git+https://github.com/trotsky1997/slopgrep.git
 cargo install lychee
+cargo install --locked --git https://github.com/Feel-ix-343/markdown-oxide.git markdown-oxide
 
 # Vue / Svelte / Astro / Prisma
 npm i -g @vue/language-server svelte-language-server @astrojs/language-server
@@ -227,7 +228,8 @@ brew install zls ocamlformat ormolu cljfmt
 Notes:
 
 - `sourcekit-lsp`, `dart format`, `mix format`, `gofmt`, and `rustfmt` often come from their main toolchains.
-- `rumdl` provides both the Markdown LSP (`rumdl server`) and formatter (`rumdl fmt`).
+- `markdown-oxide` is the built-in Markdown LSP and focuses on Markdown/PKM navigation features.
+- `rumdl` is the preferred Markdown formatter (`rumdl fmt`).
 - `semgrep` is an analyzer, not an LSP or formatter.
 - `lychee` checks broken links in Markdown, HTML, and other doc-like text files.
 - `slopgrep` is useful for prose-heavy repositories and AI-writing-tell scanning in Markdown, text, or LaTeX files.

@@ -98,7 +98,7 @@ If `Cargo.toml` exists, propose:
 
 If many `.md` / `.mdx` files exist, propose:
 
-- LSP: `markdown` via `rumdl`
+- LSP: `markdown` via `markdown-oxide`
 - Formatter: `rumdl`
 - Analyzer: `markdownlint`, optionally `lychee` for broken-link checks, and optionally `slopgrep` for prose-quality / AI-writing-tell scanning
 

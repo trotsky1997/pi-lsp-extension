@@ -111,6 +111,7 @@ export function getServerConfigsForFile(filePath: string, cwd: string, settings 
 interface OpenFile { content: string; lastAccess: number; version: number; }
 
 interface LSPClient {
+  serverId: string;
   connection: MessageConnection;
   process: ChildProcessWithoutNullStreams;
   diagnostics: Map<string, Diagnostic[]>;
@@ -317,6 +318,16 @@ function markerRoot(markers: string[]) {
   return (f: string, cwd: string, settings: LSPServerSettings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, markers));
 }
 
+function markerRootOrWorkspace(markers: string[]) {
+  return (f: string, cwd: string, settings: LSPServerSettings) => resolveRootWithOverride(f, cwd, settings, () => {
+    const rooted = findRoot(f, cwd, markers);
+    if (rooted) return rooted;
+    const absFile = path.resolve(f);
+    const absCwd = path.resolve(cwd);
+    return absFile.startsWith(absCwd) ? absCwd : undefined;
+  });
+}
+
 function suffixRoot(suffixes: string[], markers: string[] = []) {
   return (f: string, cwd: string, settings: LSPServerSettings) => resolveRootWithOverride(f, cwd, settings, () => {
     const bySuffix = findNearestDirEntryWithSuffix(path.dirname(f), suffixes, cwd);
@@ -490,7 +501,7 @@ async function spawnSourcekitLsp(root: string, settings: LSPServerSettings): Pro
 
 // Server Configs
 export const LSP_SERVERS: LSPServerConfig[] = [
-  { id: "markdown", extensions: [".md", ".mdx"], findRoot: workspaceRoot(), spawn: simpleSpawn("rumdl", ["server"]) },
+  { id: "markdown", extensions: [".md", ".mdx"], findRoot: markerRootOrWorkspace([".moxide.toml", ".obsidian", ".git"]), spawn: simpleSpawn("markdown-oxide", []) },
   { id: "texlab", extensions: [".tex", ".bib", ".sty", ".cls"], findRoot: markerRoot(["texlabroot", "Tectonic.toml", ".latexmkrc", ".git"]), spawn: simpleSpawn("texlab") },
   {
     id: "dart", extensions: [".dart"],
@@ -685,6 +696,7 @@ export class LSPManager {
       handle.process.stderr?.on("error", () => {});
 
       const client: LSPClient = {
+        serverId: config.id,
         connection: conn,
         process: handle.process,
         diagnostics: new Map(),
@@ -742,7 +754,10 @@ export class LSPManager {
         initializationOptions: handle.initializationOptions ?? {},
         capabilities: {
           window: { workDoneProgress: true },
-          workspace: { configuration: true },
+          workspace: {
+            configuration: true,
+            didChangeWatchedFiles: { dynamicRegistration: true },
+          },
           textDocument: {
             synchronization: { didSave: true, didOpen: true, didChange: true, didClose: true },
             publishDiagnostics: { versionSupport: true },
@@ -1041,6 +1056,30 @@ export class LSPManager {
       }));
     }
     return result as DocumentSymbol[];
+  }
+
+  private isMarkdownPath(filePath: string): boolean {
+    const ext = path.extname(filePath).toLowerCase();
+    return ext === ".md" || ext === ".mdx";
+  }
+
+  private shouldUseMarkdownFallback(filePath: string): boolean {
+    return this.isMarkdownPath(filePath);
+  }
+
+  private locationHasMeaningfulRange(location: Location): boolean {
+    return location.range.start.line !== location.range.end.line
+      || location.range.start.character !== location.range.end.character;
+  }
+
+  private hoverToText(hover: Hover | null): string {
+    if (!hover) return "";
+    const contents = hover.contents;
+    if (typeof contents === "string") return contents;
+    if (Array.isArray(contents)) {
+      return contents.map((item) => typeof item === "string" ? item : item.value ?? "").join("\n");
+    }
+    return typeof contents === "object" && contents ? (contents.value ?? "") : "";
   }
 
   private async openOrUpdate(clients: LSPClient[], absPath: string, uri: string, langId: string, content: string, evict = true) {
@@ -1394,7 +1433,11 @@ export class LSPManager {
       try { return this.normalizeLocs(await c.connection.sendRequest(DefinitionRequest.type, { textDocument: { uri: l.uri }, position: pos })); }
       catch { return []; }
     }));
-    return results.flat();
+    const flattened = results.flat();
+    if (this.shouldUseMarkdownFallback(l.absPath) && (flattened.length === 0 || flattened.every((location) => !this.locationHasMeaningfulRange(location)))) {
+      return getOrCreateTreeSitterManager().getDefinition(l.absPath, line, col);
+    }
+    return flattened;
   }
 
   async getReferences(fp: string, line: number, col: number): Promise<Location[]> {
@@ -1409,20 +1452,32 @@ export class LSPManager {
       try { return this.normalizeLocs(await c.connection.sendRequest(ReferencesRequest.type, { textDocument: { uri: l.uri }, position: pos, context: { includeDeclaration: true } })); }
       catch { return []; }
     }));
-    return results.flat();
+    const flattened = results.flat();
+    if (this.shouldUseMarkdownFallback(l.absPath) && flattened.length === 0) {
+      return getOrCreateTreeSitterManager().getReferences(l.absPath, line, col);
+    }
+    return flattened;
   }
 
   async getHover(fp: string, line: number, col: number): Promise<Hover | null> {
     const l = await this.loadFile(fp);
-    if (!l) return null;
+    if (!l) return getOrCreateTreeSitterManager().getHover(this.resolve(fp), line, col);
     await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
     const pos = this.toPos(line, col);
     for (const c of this.getSupportedClients(l.clients, "hover")) {
       if (c.closed) continue;
-      try { const r = await c.connection.sendRequest(HoverRequest.type, { textDocument: { uri: l.uri }, position: pos }); if (r) return r; }
+      try {
+        const r = await c.connection.sendRequest(HoverRequest.type, { textDocument: { uri: l.uri }, position: pos });
+        if (r) {
+          const hoverText = this.hoverToText(r);
+          if (!(this.shouldUseMarkdownFallback(l.absPath) && hoverText.includes("Heading not found"))) {
+            return r;
+          }
+        }
+      }
       catch {}
     }
-    return null;
+    return getOrCreateTreeSitterManager().getHover(l.absPath, line, col);
   }
 
   async getSignatureHelp(fp: string, line: number, col: number): Promise<SignatureHelp | null> {

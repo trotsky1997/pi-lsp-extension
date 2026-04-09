@@ -238,6 +238,17 @@ test("markdown: uses workspace root", async () => {
   });
 });
 
+test("markdown: prefers moxide marker root", async () => {
+  await withTempDir({
+    "vault/.moxide.toml": "",
+    "vault/docs/guide.md": "# Guide",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "markdown")!;
+    const root = server.findRoot(join(dir, "vault/docs/guide.md"), dir, {});
+    assertEquals(root, join(dir, "vault"), "Markdown should use .moxide.toml root when present");
+  });
+});
+
 test("texlab: finds root with texlabroot marker", async () => {
   await withTempDir({
     "paper/texlabroot": "",
@@ -1426,6 +1437,58 @@ exit 1
     assertEquals(result.findings[0]?.source, "markdownlint", "Expected markdownlint finding source");
     assertEquals(result.findings[0]?.line, 2, "Expected markdownlint line number from stderr JSON");
     assert(!result.error, `Did not expect stderr JSON to be treated as an analyzer error: ${result.error ?? ""}`);
+  });
+});
+
+test("TreeSitterManager: extracts markdown symbols and folding ranges", async () => {
+  await withTempDir({
+    "docs/guide.md": "# Title\n\nIntro\n\n## Details\n\n```ts\nconst x = 1;\n```\n",
+  }, async (dir) => {
+    const file = join(dir, "docs/guide.md");
+    const manager = new TreeSitterManager();
+
+    assert(manager.supportsOperation(file, "documentSymbol"), "Expected markdown documentSymbol fallback support");
+    assert(manager.supportsOperation(file, "foldingRange"), "Expected markdown foldingRange fallback support");
+
+    const symbols = manager.getDocumentSymbols(file);
+    assertEquals(symbols.length, 1, `Expected one top-level markdown symbol, got ${symbols.length}`);
+    assertEquals(symbols[0]?.name, "Title", "Expected the top-level heading to become a symbol");
+    assertEquals(symbols[0]?.children?.[0]?.name, "Details", "Expected nested heading symbol for Details");
+
+    const ranges = manager.getFoldingRanges(file);
+    assert(ranges.some((range) => range.startLine === 0 && range.endLine >= 7), `Expected heading folding range, got ${JSON.stringify(ranges)}`);
+    assert(ranges.some((range) => range.startLine === 6 && range.endLine === 8), `Expected fenced code block folding range, got ${JSON.stringify(ranges)}`);
+  });
+});
+
+test("LSPManager: uses Markdown fallback for structural operations", async () => {
+  await withTempDir({
+    ".pi": null,
+    ".pi/settings.json": JSON.stringify({
+      lsp: {
+        servers: {
+          markdown: { disabled: true },
+        },
+      },
+    }),
+    "README.md": "# Title\n\nIntro\n\n## Details\n\nMore text\n",
+  }, async (dir) => {
+    const file = join(dir, "README.md");
+    const manager = new LSPManager(dir);
+    try {
+      assert(await manager.supportsOperation(file, "documentSymbol"), "Expected markdown documentSymbol support via fallback");
+      assert(await manager.supportsOperation(file, "foldingRange"), "Expected markdown foldingRange support via fallback");
+      assertEquals(await manager.getOperationBackend(file, "documentSymbol"), "tree-sitter", "Expected markdown documentSymbol backend to use fallback");
+
+      const symbols = await manager.getDocumentSymbols(file);
+      assert(symbols.some((symbol) => symbol.name === "Title"), `Expected markdown heading symbol, got ${symbols.map((symbol) => symbol.name).join(", ")}`);
+
+      const workspaceSymbols = await manager.getWorkspaceSymbols(file, "detail");
+      assertEquals(workspaceSymbols.length, 1, `Expected one matching markdown workspace symbol, got ${workspaceSymbols.length}`);
+      assertEquals(workspaceSymbols[0]?.name, "Details", "Expected workspace symbol to come from markdown heading");
+    } finally {
+      await manager.shutdown();
+    }
   });
 });
 
