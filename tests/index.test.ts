@@ -34,6 +34,7 @@ import {
   formatPrepareCallHierarchyResult,
   formatWorkspaceSymbolResult,
 } from "../lsp-tool-formatters.js";
+import { buildOperationSummary, withBackendLabel } from "../lsp-tool.js";
 import { safeParseLspToolInput } from "../lsp-tool-schemas.js";
 import { extractApplyPatchPaths, extractBashRedirectionPaths, selectPendingDiagnosticsForConfig } from "../lsp.js";
 
@@ -412,6 +413,22 @@ test("formatWorkspaceSymbolResult: groups workspace symbols by file", () => {
       "  run (Function) - Line 10 in App",
     ].join("\n"),
   );
+});
+
+test("buildOperationSummary: prefixes Tree-sitter fallback summaries", () => {
+  const result = buildOperationSummary({
+    operation: "documentSymbol",
+    backend: "tree-sitter",
+    resultCount: 2,
+    fileCount: 1,
+  });
+
+  assertEqual(result, "Tree-sitter fallback: Found 2 symbols");
+});
+
+test("withBackendLabel: prefixes Tree-sitter text output", () => {
+  const result = withBackendLabel("No diagnostics.", "tree-sitter");
+  assertEqual(result, "Fallback provider: tree-sitter\nNo diagnostics.");
 });
 
 test("formatPrepareCallHierarchyResult: formats a single call item", () => {

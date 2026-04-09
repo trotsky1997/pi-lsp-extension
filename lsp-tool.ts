@@ -25,6 +25,7 @@ import {
   filterDiagnosticsBySeverity,
   formatDiagnostic,
   getOrCreateManager,
+  type OperationBackend,
   type SeverityFilter,
   uriToPath,
 } from "./lsp-core.js";
@@ -69,6 +70,7 @@ const LspParams = Type.Object({
 type LspParamsType = LspToolInput;
 
 interface LspResultDetails {
+  backend?: OperationBackend;
   fileCount?: number;
   filePath?: string;
   operation: Operation;
@@ -298,7 +300,7 @@ function formatCodeActions(actions: Array<CodeAction | Command>): string {
     return `${index + 1}. ${title}${kind}${preferred}`;
   }).join("\n");
 }
-function buildOperationSummary(details: LspResultDetails): string | null {
+export function buildOperationSummary(details: LspResultDetails): string | null {
   if (details.resultCount === undefined || details.fileCount === undefined) return null;
   const labelConfig = OPERATION_LABELS[details.operation];
 
@@ -307,7 +309,13 @@ function buildOperationSummary(details: LspResultDetails): string | null {
     : `Found ${details.resultCount} ${details.resultCount === 1 ? labelConfig.singular : labelConfig.plural}`;
 
   if (details.fileCount > 1) summary += ` across ${details.fileCount} files`;
+  if (details.backend === "tree-sitter") summary = `Tree-sitter fallback: ${summary}`;
   return summary;
+}
+
+export function withBackendLabel(text: string, backend: OperationBackend | undefined): string {
+  if (backend !== "tree-sitter") return text;
+  return `Fallback provider: tree-sitter\n${text}`;
 }
 
 function buildResult(text: string, details: LspResultDetails | Record<string, unknown>) {
@@ -346,43 +354,45 @@ function formatOperationResult(
   result: unknown,
   filePath: string | undefined,
   cwd: string,
+  backend?: OperationBackend,
 ): { details: LspResultDetails; text: string } {
   switch (operation) {
     case "goToDefinition": {
       const rawResults = Array.isArray(result) ? result as Array<Location | LocationLink> : result ? [result as Location | LocationLink] : [];
       return {
-        text: formatGoToDefinitionResult(result as Location | Location[] | LocationLink | LocationLink[] | null, cwd),
-        details: { operation, filePath, resultCount: rawResults.length, fileCount: countUniqueFilesFromLocations(rawResults) },
+        text: withBackendLabel(formatGoToDefinitionResult(result as Location | Location[] | LocationLink | LocationLink[] | null, cwd), backend),
+        details: { operation, filePath, backend, resultCount: rawResults.length, fileCount: countUniqueFilesFromLocations(rawResults) },
       };
     }
     case "findReferences": {
       const locations = (result as Location[] | null | undefined) ?? [];
       return {
-        text: formatFindReferencesResult(locations, cwd),
-        details: { operation, filePath, resultCount: locations.length, fileCount: countUniqueFilesFromLocations(locations) },
+        text: withBackendLabel(formatFindReferencesResult(locations, cwd), backend),
+        details: { operation, filePath, backend, resultCount: locations.length, fileCount: countUniqueFilesFromLocations(locations) },
       };
     }
     case "hover": {
       const hover = result as Hover | null | undefined;
       return {
-        text: formatHoverResult(hover),
-        details: { operation, filePath, resultCount: hover ? 1 : 0, fileCount: hover ? 1 : 0 },
+        text: withBackendLabel(formatHoverResult(hover), backend),
+        details: { operation, filePath, backend, resultCount: hover ? 1 : 0, fileCount: hover ? 1 : 0 },
       };
     }
     case "documentHighlight": {
       const highlights = (result as DocumentHighlight[] | null | undefined) ?? [];
       return {
-        text: formatDocumentHighlightResult(highlights),
-        details: { operation, filePath, resultCount: highlights.length, fileCount: highlights.length > 0 ? 1 : 0 },
+        text: withBackendLabel(formatDocumentHighlightResult(highlights), backend),
+        details: { operation, filePath, backend, resultCount: highlights.length, fileCount: highlights.length > 0 ? 1 : 0 },
       };
     }
     case "documentSymbol": {
       const symbols = (result as Array<DocumentSymbol | SymbolInformation> | null | undefined) ?? [];
       const isFlat = symbols.length > 0 && "location" in symbols[0]!;
       return {
-        text: formatDocumentSymbolResult(symbols as DocumentSymbol[] | SymbolInformation[], cwd),
+        text: withBackendLabel(formatDocumentSymbolResult(symbols as DocumentSymbol[] | SymbolInformation[], cwd), backend),
         details: {
           operation,
+          backend,
           filePath,
           resultCount: isFlat ? symbols.length : countSymbols(symbols as DocumentSymbol[]),
           fileCount: symbols.length > 0 ? 1 : 0,
@@ -392,87 +402,87 @@ function formatOperationResult(
     case "workspaceSymbol": {
       const symbols = (result as SymbolInformation[] | null | undefined) ?? [];
       return {
-        text: formatWorkspaceSymbolResult(symbols, cwd),
-        details: { operation, filePath, resultCount: symbols.length, fileCount: countUniqueUris(symbols.map(symbol => symbol.location?.uri ?? "")) },
+        text: withBackendLabel(formatWorkspaceSymbolResult(symbols, cwd), backend),
+        details: { operation, filePath, backend, resultCount: symbols.length, fileCount: countUniqueUris(symbols.map(symbol => symbol.location?.uri ?? "")) },
       };
     }
     case "goToImplementation": {
       const locations = (result as Array<Location | LocationLink> | null | undefined) ?? [];
       return {
-        text: formatGoToDefinitionResult(locations as Location[] | LocationLink[], cwd),
-        details: { operation, filePath, resultCount: locations.length, fileCount: countUniqueFilesFromLocations(locations) },
+        text: withBackendLabel(formatGoToDefinitionResult(locations as Location[] | LocationLink[], cwd), backend),
+        details: { operation, filePath, backend, resultCount: locations.length, fileCount: countUniqueFilesFromLocations(locations) },
       };
     }
     case "typeDefinition": {
       const locations = (result as Array<Location | LocationLink> | null | undefined) ?? [];
       return {
-        text: formatGoToDefinitionResult(locations as Location[] | LocationLink[], cwd),
-        details: { operation, filePath, resultCount: locations.length, fileCount: countUniqueFilesFromLocations(locations) },
+        text: withBackendLabel(formatGoToDefinitionResult(locations as Location[] | LocationLink[], cwd), backend),
+        details: { operation, filePath, backend, resultCount: locations.length, fileCount: countUniqueFilesFromLocations(locations) },
       };
     }
     case "prepareCallHierarchy": {
       const items = (result as CallHierarchyItem[] | null | undefined) ?? [];
       return {
-        text: formatPrepareCallHierarchyResult(items, cwd),
-        details: { operation, filePath, resultCount: items.length, fileCount: countUniqueFilesFromCallItems(items) },
+        text: withBackendLabel(formatPrepareCallHierarchyResult(items, cwd), backend),
+        details: { operation, filePath, backend, resultCount: items.length, fileCount: countUniqueFilesFromCallItems(items) },
       };
     }
     case "incomingCalls": {
       const calls = (result as CallHierarchyIncomingCall[] | null | undefined) ?? [];
       return {
-        text: formatIncomingCallsResult(calls, cwd),
-        details: { operation, filePath, resultCount: calls.length, fileCount: countUniqueFilesFromIncomingCalls(calls) },
+        text: withBackendLabel(formatIncomingCallsResult(calls, cwd), backend),
+        details: { operation, filePath, backend, resultCount: calls.length, fileCount: countUniqueFilesFromIncomingCalls(calls) },
       };
     }
     case "outgoingCalls": {
       const calls = (result as CallHierarchyOutgoingCall[] | null | undefined) ?? [];
       return {
-        text: formatOutgoingCallsResult(calls, cwd),
-        details: { operation, filePath, resultCount: calls.length, fileCount: countUniqueFilesFromOutgoingCalls(calls) },
+        text: withBackendLabel(formatOutgoingCallsResult(calls, cwd), backend),
+        details: { operation, filePath, backend, resultCount: calls.length, fileCount: countUniqueFilesFromOutgoingCalls(calls) },
       };
     }
     case "signatureHelp": {
       const help = result as SignatureHelp | null | undefined;
       return {
-        text: formatSignature(help),
-        details: { operation, filePath, resultCount: help ? 1 : 0, fileCount: help ? 1 : 0 },
+        text: withBackendLabel(formatSignature(help), backend),
+        details: { operation, filePath, backend, resultCount: help ? 1 : 0, fileCount: help ? 1 : 0 },
       };
     }
     case "rename": {
       const edit = result as WorkspaceEdit | null | undefined;
       const counts = countWorkspaceEditChanges(edit);
       return {
-        text: edit ? formatWorkspaceEdit(edit, cwd) : "No rename available at this position.",
-        details: { operation, filePath, resultCount: counts.resultCount, fileCount: counts.fileCount },
+        text: withBackendLabel(edit ? formatWorkspaceEdit(edit, cwd) : "No rename available at this position.", backend),
+        details: { operation, filePath, backend, resultCount: counts.resultCount, fileCount: counts.fileCount },
       };
     }
     case "prepareRename": {
       const renameTarget = result as { placeholder?: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } } | null | undefined;
       return {
-        text: renameTarget
+        text: withBackendLabel(renameTarget
           ? `Rename available for ${renameTarget.range.start.line + 1}:${renameTarget.range.start.character + 1}-${renameTarget.range.end.line + 1}:${renameTarget.range.end.character + 1}${renameTarget.placeholder ? `\nPlaceholder: ${renameTarget.placeholder}` : ""}`
-          : "Rename is not available at this position.",
-        details: { operation, filePath, resultCount: renameTarget ? 1 : 0, fileCount: renameTarget ? 1 : 0 },
+          : "Rename is not available at this position.", backend),
+        details: { operation, filePath, backend, resultCount: renameTarget ? 1 : 0, fileCount: renameTarget ? 1 : 0 },
       };
     }
     case "foldingRange": {
       const ranges = (result as FoldingRange[] | null | undefined) ?? [];
       return {
-        text: formatFoldingRangeResult(ranges),
-        details: { operation, filePath, resultCount: ranges.length, fileCount: ranges.length > 0 ? 1 : 0 },
+        text: withBackendLabel(formatFoldingRangeResult(ranges), backend),
+        details: { operation, filePath, backend, resultCount: ranges.length, fileCount: ranges.length > 0 ? 1 : 0 },
       };
     }
     case "codeAction": {
       const actions = (result as Array<CodeAction | Command> | null | undefined) ?? [];
       return {
-        text: formatCodeActions(actions),
-        details: { operation, filePath, resultCount: actions.length, fileCount: actions.length > 0 ? 1 : 0 },
+        text: withBackendLabel(formatCodeActions(actions), backend),
+        details: { operation, filePath, backend, resultCount: actions.length, fileCount: actions.length > 0 ? 1 : 0 },
       };
     }
     default:
       return {
-        text: typeof result === "string" ? result : String(result),
-        details: { operation, filePath },
+        text: withBackendLabel(typeof result === "string" ? result : String(result), backend),
+        details: { operation, filePath, backend },
       };
   }
 }
@@ -501,6 +511,7 @@ Extras: diagnostics, workspaceDiagnostics, signatureHelp, rename, prepareRename,
 
         switch (params.operation) {
           case "diagnostics": {
+            const backend = await abortable(manager.getOperationBackend(params.filePath!, params.operation), signal) ?? undefined;
             const result = await abortable(manager.touchFileAndWait(params.filePath!, diagnosticsWaitMsForFile(params.filePath!)), signal);
             const diagnostics = filterDiagnosticsBySeverity(result.diagnostics, severity);
             const text = (result as { unsupported?: boolean; error?: string; receivedResponse: boolean }).unsupported
@@ -511,8 +522,9 @@ Extras: diagnostics, workspaceDiagnostics, signatureHelp, rename, prepareRename,
                   ? diagnostics.map(formatDiagnostic).join("\n")
                   : "No diagnostics.";
             formatted = {
-              text,
+              text: withBackendLabel(text, backend),
               details: {
+                backend,
                 operation: params.operation,
                 filePath: params.filePath,
                 resultCount: diagnostics.length,
@@ -554,7 +566,8 @@ Extras: diagnostics, workspaceDiagnostics, signatureHelp, rename, prepareRename,
             break;
           }
           default: {
-            if (!(await abortable(manager.supportsOperation(params.filePath!, params.operation), signal))) {
+            const backend = await abortable(manager.getOperationBackend(params.filePath!, params.operation), signal) ?? undefined;
+            if (!backend) {
               return buildResult(`Operation ${params.operation} is not supported by the active LSP server for ${params.filePath}.`, {
                 operation: params.operation,
                 filePath: params.filePath,
@@ -621,7 +634,7 @@ Extras: diagnostics, workspaceDiagnostics, signatureHelp, rename, prepareRename,
                 break;
             }
 
-            formatted = formatOperationResult(params.operation, result, params.filePath, ctx.cwd);
+            formatted = formatOperationResult(params.operation, result, params.filePath, ctx.cwd, backend);
             break;
           }
         }

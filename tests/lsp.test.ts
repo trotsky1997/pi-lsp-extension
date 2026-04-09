@@ -16,9 +16,10 @@ import { join } from "path";
 import { pathToFileURL } from "url";
 import { ANALYZERS, getAnalyzerConfigsForFile } from "../analyzer-core.js";
 import { FORMATTERS, getFormatterConfigsForFile } from "../formatter-core.js";
-import { LSP_SERVERS, LANGUAGE_IDS } from "../lsp-core.js";
+import { LSPManager, LSP_SERVERS, LANGUAGE_IDS } from "../lsp-core.js";
 import { loadResolvedLspSettings } from "../lsp-settings.js";
 import { resolveLspUiState } from "../lsp.js";
+import { TreeSitterManager } from "../tree-sitter-core.js";
 
 // ============================================================================
 // Test utilities
@@ -1368,6 +1369,136 @@ test("resolveLspUiState: project scope is reported from disk settings", async ()
     assertEquals(resolved.hookScope, "project", "Hook scope should be project");
     assertEquals(resolved.pythonProvider, "ty", "Project provider should come from disk");
     assertEquals(resolved.pythonScope, "project", "Python scope should be project");
+  });
+});
+
+test("TreeSitterManager: reports syntax diagnostics without project config", async () => {
+  await withTempDir({
+    "broken.ts": "const broken = ;\n",
+  }, async (dir) => {
+    const manager = new TreeSitterManager();
+    const diagnostics = manager.getDiagnostics(join(dir, "broken.ts"));
+
+    assert(diagnostics.length > 0, "Expected Tree-sitter diagnostics for invalid TypeScript");
+    assert(
+      diagnostics.some((diagnostic) => diagnostic.message.toLowerCase().includes("syntax") || diagnostic.message.toLowerCase().includes("missing")),
+      `Expected syntax-oriented diagnostic message, got: ${diagnostics.map((diagnostic) => diagnostic.message).join(", ")}`,
+    );
+  });
+});
+
+test("LSPManager: falls back to Tree-sitter diagnostics without LSP root", async () => {
+  await withTempDir({
+    "broken.ts": "const broken = ;\n",
+  }, async (dir) => {
+    const manager = new LSPManager(dir);
+    try {
+      const result = await manager.touchFileAndWait(join(dir, "broken.ts"), 1000);
+      assert(result.receivedResponse, "Expected fallback diagnostics to count as a response");
+      assert(!result.unsupported, `Expected Tree-sitter fallback instead of unsupported: ${result.error ?? ""}`);
+      assert(result.diagnostics.length > 0, "Expected fallback diagnostics for invalid TypeScript");
+    } finally {
+      await manager.shutdown();
+    }
+  });
+});
+
+test("LSPManager: uses Tree-sitter for document symbols and folding ranges", async () => {
+  await withTempDir({
+    "main.py": `class Greeter:\n    def greet(self, name: str) -> str:\n        return \"hi \" + name\n`,
+  }, async (dir) => {
+    const file = join(dir, "main.py");
+    const manager = new LSPManager(dir);
+    try {
+      assert(await manager.supportsOperation(file, "documentSymbol"), "Expected documentSymbol fallback support");
+      assert(await manager.supportsOperation(file, "foldingRange"), "Expected foldingRange fallback support");
+
+      const symbols = await manager.getDocumentSymbols(file);
+      assert(symbols.some((symbol) => symbol.name === "Greeter"), `Expected class symbol, got: ${symbols.map((symbol) => symbol.name).join(", ")}`);
+      assert(symbols.some((symbol) => symbol.name === "greet"), `Expected method symbol, got: ${symbols.map((symbol) => symbol.name).join(", ")}`);
+
+      const ranges = await manager.getFoldingRanges(file);
+      assert(ranges.length > 0, "Expected folding ranges from Tree-sitter fallback");
+    } finally {
+      await manager.shutdown();
+    }
+  });
+});
+
+test("LSPManager: uses Tree-sitter for same-file definitions and references", async () => {
+  await withTempDir({
+    "main.ts": `function greet(name: string) {\n  return name;\n}\n\nconst first = greet(\"a\");\nconst second = greet(\"b\");\n`,
+  }, async (dir) => {
+    const file = join(dir, "main.ts");
+    const manager = new LSPManager(dir);
+    try {
+      assert(await manager.supportsOperation(file, "goToDefinition"), "Expected definition fallback support");
+      assert(await manager.supportsOperation(file, "findReferences"), "Expected reference fallback support");
+
+      const definitions = await manager.getDefinition(file, 5, 15);
+      assert(definitions.length > 0, "Expected same-file definition from Tree-sitter fallback");
+      assertEquals(definitions[0]?.range.start.line, 0, "Definition should point to the function declaration");
+
+      const references = await manager.getReferences(file, 1, 10);
+      assert(references.length >= 3, `Expected declaration plus two calls, got ${references.length}`);
+    } finally {
+      await manager.shutdown();
+    }
+  });
+});
+
+
+test("LSPManager: uses Tree-sitter for document highlights", async () => {
+  await withTempDir({
+    "main.ts": `function greet(name: string) {
+  return name;
+}
+
+const first = greet("a");
+const second = greet("b");
+`,
+  }, async (dir) => {
+    const file = join(dir, "main.ts");
+    const manager = new LSPManager(dir);
+    try {
+      assert(await manager.supportsOperation(file, "documentHighlight"), "Expected documentHighlight fallback support");
+      const highlights = await manager.getDocumentHighlights(file, 5, 15);
+      assert(highlights.length >= 3, `Expected declaration plus two highlighted calls, got ${highlights.length}`);
+    } finally {
+      await manager.shutdown();
+    }
+  });
+});
+
+test("LSPManager: uses Tree-sitter for workspace symbols", async () => {
+  await withTempDir({
+    "src/main.ts": `function greet(name: string) {
+  return name;
+}
+
+export const answer = 42;
+`,
+    "src/helper.py": `class Helper:
+    def ping(self):
+        return "pong"
+`,
+  }, async (dir) => {
+    const file = join(dir, "src/main.ts");
+    const manager = new LSPManager(dir);
+    try {
+      assert(await manager.supportsOperation(file, "workspaceSymbol"), "Expected workspaceSymbol fallback support");
+      assertEquals(await manager.getOperationBackend(file, "workspaceSymbol"), "tree-sitter");
+
+      const allSymbols = await manager.getWorkspaceSymbols(file);
+      assert(allSymbols.some((symbol) => symbol.name === "greet"), `Expected workspace symbol for greet, got: ${allSymbols.map((symbol) => symbol.name).join(", ")}`);
+      assert(allSymbols.some((symbol) => symbol.name === "Helper"), `Expected workspace symbol for Helper, got: ${allSymbols.map((symbol) => symbol.name).join(", ")}`);
+
+      const filtered = await manager.getWorkspaceSymbols(file, "hel");
+      assertEquals(filtered.length, 1, `Expected one filtered workspace symbol, got ${filtered.length}`);
+      assertEquals(filtered[0]?.name, "Helper");
+    } finally {
+      await manager.shutdown();
+    }
   });
 });
 

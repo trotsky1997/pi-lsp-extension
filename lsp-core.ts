@@ -52,6 +52,7 @@ import {
   FileChangeType,
 } from "vscode-languageserver-protocol";
 import { loadResolvedLspSettings, type LSPServerSettings, type PythonProvider, type ResolvedLSPSettings } from "./lsp-settings.js";
+import { getOrCreateTreeSitterManager } from "./tree-sitter-core.js";
 
 // Config
 const INIT_TIMEOUT_MS = 30000;
@@ -130,6 +131,7 @@ export interface FileDiagnosticItem {
 }
 
 export interface FileDiagnosticsResult { items: FileDiagnosticItem[]; }
+export type OperationBackend = "lsp" | "tree-sitter";
 
 // Utilities
 const SEARCH_PATHS = [
@@ -856,10 +858,20 @@ export class LSPManager {
   }
 
   async supportsOperation(filePath: string, operation: string): Promise<boolean> {
+    return (await this.getOperationBackend(filePath, operation)) !== null;
+  }
+
+  async getOperationBackend(filePath: string, operation: string): Promise<OperationBackend | null> {
     const absPath = this.resolve(filePath);
     const clients = await this.getClientsForFile(absPath);
-    if (!clients.length) return false;
-    return clients.some(client => !client.closed && this.supportsOperationForClient(client, operation));
+    if (operation === "diagnostics") {
+      if (clients.length > 0) return "lsp";
+      return getOrCreateTreeSitterManager().supportsOperation(absPath, "diagnostics") ? "tree-sitter" : null;
+    }
+    if (clients.some(client => !client.closed && this.supportsOperationForClient(client, operation))) {
+      return "lsp";
+    }
+    return getOrCreateTreeSitterManager().supportsOperation(absPath, operation) ? "tree-sitter" : null;
   }
 
   async notifyWorkspaceFileEvent(filePath: string, type: FileChangeType = FileChangeType.Changed): Promise<number> {
@@ -1092,7 +1104,9 @@ export class LSPManager {
   async openFile(filePath: string, content?: string): Promise<boolean> {
     const absPath = this.resolve(filePath);
     const clients = await this.getClientsForFile(absPath);
-    if (!clients.length) return false;
+    if (!clients.length) {
+      return getOrCreateTreeSitterManager().supportsOperation(absPath, "diagnostics");
+    }
 
     const nextContent = content ?? this.readFile(absPath);
     if (nextContent === null) return false;
@@ -1247,6 +1261,10 @@ export class LSPManager {
 
     const clients = await this.getClientsForFile(absPath);
     if (!clients.length) {
+      const treeSitter = getOrCreateTreeSitterManager();
+      if (treeSitter.supportsOperation(absPath, "diagnostics")) {
+        return { diagnostics: treeSitter.getDiagnostics(absPath), receivedResponse: true };
+      }
       return { diagnostics: [], receivedResponse: false, unsupported: true, error: this.explainNoLsp(absPath) };
     }
 
@@ -1303,7 +1321,12 @@ export class LSPManager {
       catch (e) { results.push({ file: absPath, diagnostics: [], status: 'error', error: String(e) }); continue; }
 
       if (!clients.length) {
-        results.push({ file: absPath, diagnostics: [], status: 'unsupported', error: this.explainNoLsp(absPath) });
+        const treeSitter = getOrCreateTreeSitterManager();
+        if (treeSitter.supportsOperation(absPath, "diagnostics")) {
+          results.push({ file: absPath, diagnostics: treeSitter.getDiagnostics(absPath), status: 'ok' });
+        } else {
+          results.push({ file: absPath, diagnostics: [], status: 'unsupported', error: this.explainNoLsp(absPath) });
+        }
         continue;
       }
 
@@ -1361,10 +1384,11 @@ export class LSPManager {
 
   async getDefinition(fp: string, line: number, col: number): Promise<Location[]> {
     const l = await this.loadFile(fp);
-    if (!l) return [];
+    if (!l) return getOrCreateTreeSitterManager().getDefinition(this.resolve(fp), line, col);
     await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
     const pos = this.toPos(line, col);
     const supportedClients = this.getSupportedClients(l.clients, "goToDefinition");
+    if (!supportedClients.length) return getOrCreateTreeSitterManager().getDefinition(l.absPath, line, col);
     const results = await Promise.all(supportedClients.map(async c => {
       if (c.closed) return [];
       try { return this.normalizeLocs(await c.connection.sendRequest(DefinitionRequest.type, { textDocument: { uri: l.uri }, position: pos })); }
@@ -1375,10 +1399,11 @@ export class LSPManager {
 
   async getReferences(fp: string, line: number, col: number): Promise<Location[]> {
     const l = await this.loadFile(fp);
-    if (!l) return [];
+    if (!l) return getOrCreateTreeSitterManager().getReferences(this.resolve(fp), line, col);
     await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
     const pos = this.toPos(line, col);
     const supportedClients = this.getSupportedClients(l.clients, "findReferences");
+    if (!supportedClients.length) return getOrCreateTreeSitterManager().getReferences(l.absPath, line, col);
     const results = await Promise.all(supportedClients.map(async c => {
       if (c.closed) return [];
       try { return this.normalizeLocs(await c.connection.sendRequest(ReferencesRequest.type, { textDocument: { uri: l.uri }, position: pos, context: { includeDeclaration: true } })); }
@@ -1415,9 +1440,10 @@ export class LSPManager {
 
   async getDocumentSymbols(fp: string): Promise<DocumentSymbol[]> {
     const l = await this.loadFile(fp);
-    if (!l) return [];
+    if (!l) return getOrCreateTreeSitterManager().getDocumentSymbols(this.resolve(fp));
     await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
     const supportedClients = this.getSupportedClients(l.clients, "documentSymbol");
+    if (!supportedClients.length) return getOrCreateTreeSitterManager().getDocumentSymbols(l.absPath);
     const results = await Promise.all(supportedClients.map(async c => {
       if (c.closed) return [];
       try { return this.normalizeSymbols(await c.connection.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri: l.uri } })); }
@@ -1428,10 +1454,11 @@ export class LSPManager {
 
   async getDocumentHighlights(fp: string, line: number, col: number): Promise<DocumentHighlight[]> {
     const l = await this.loadFile(fp);
-    if (!l) return [];
+    if (!l) return getOrCreateTreeSitterManager().getDocumentHighlights(this.resolve(fp), line, col);
     await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
     const pos = this.toPos(line, col);
     const supportedClients = this.getSupportedClients(l.clients, "documentHighlight");
+    if (!supportedClients.length) return getOrCreateTreeSitterManager().getDocumentHighlights(l.absPath, line, col);
     const results = await Promise.all(supportedClients.map(async c => {
       if (c.closed) return [];
       try {
@@ -1464,9 +1491,10 @@ export class LSPManager {
   async getWorkspaceSymbols(fp: string, query = ""): Promise<SymbolInformation[]> {
     const absPath = this.resolve(fp);
     const clients = await this.getClientsForFile(absPath);
-    if (!clients.length) return [];
+    if (!clients.length) return getOrCreateTreeSitterManager().getWorkspaceSymbols(absPath, query);
 
     const supportedClients = this.getSupportedClients(clients, "workspaceSymbol");
+    if (!supportedClients.length) return getOrCreateTreeSitterManager().getWorkspaceSymbols(absPath, query);
     const results = await Promise.all(supportedClients.map(async c => {
       if (c.closed) return [];
       try {
@@ -1482,9 +1510,10 @@ export class LSPManager {
 
   async getFoldingRanges(fp: string): Promise<FoldingRange[]> {
     const l = await this.loadFile(fp);
-    if (!l) return [];
+    if (!l) return getOrCreateTreeSitterManager().getFoldingRanges(this.resolve(fp));
     await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
     const supportedClients = this.getSupportedClients(l.clients, "foldingRange");
+    if (!supportedClients.length) return getOrCreateTreeSitterManager().getFoldingRanges(l.absPath);
     const results = await Promise.all(supportedClients.map(async c => {
       if (c.closed) return [];
       try {
