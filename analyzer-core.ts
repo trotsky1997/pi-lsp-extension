@@ -677,14 +677,16 @@ export async function runAnalyzersForFile(filePath: string, cwd: string): Promis
 
     try {
       const result = await runCommand(command);
-      const parsedFindings = analyzer.parseOutput(result.stdout, absPath, command).filter((finding) => finding.filePath === "" || path.resolve(finding.filePath) === absPath);
+      const parseSource = result.stdout.trim() ? result.stdout : result.stderr;
+      const parsedFromStderr = !result.stdout.trim() && result.stderr.trim().length > 0;
+      const parsedFindings = analyzer.parseOutput(parseSource, absPath, command).filter((finding) => finding.filePath === "" || path.resolve(finding.filePath) === absPath);
       findings.push(...parsedFindings);
 
       if (result.code !== 0 && parsedFindings.length === 0) {
         errors.push(`${analyzer.id}: ${result.stderr.trim() || (result.signal ? `analyzer exited via signal ${result.signal}` : `analyzer exited with code ${result.code}`)}`);
         continue;
       }
-      if (result.stderr.trim()) errors.push(`${analyzer.id}: ${result.stderr.trim()}`);
+      if (result.stderr.trim() && !parsedFromStderr) errors.push(`${analyzer.id}: ${result.stderr.trim()}`);
     } catch (error) {
       errors.push(`${analyzer.id}: ${error instanceof Error ? error.message : String(error)}`);
     }

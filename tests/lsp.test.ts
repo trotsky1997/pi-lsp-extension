@@ -1179,6 +1179,17 @@ test("formatter matching: rumdl matches markdown files", async () => {
   });
 });
 
+test("formatter matching: markdown prefers rumdl and avoids biome", async () => {
+  await withTempDir({
+    "docs/guide.md": "# Guide",
+  }, async (dir) => {
+    const matches = getFormatterConfigsForFile(join(dir, "docs/guide.md"), dir);
+    assertEquals(matches[0]?.id, "rumdl", "Markdown should prefer rumdl first");
+    assert(matches.some((formatter) => formatter.id === "prettier"), "prettier should remain available as a fallback for markdown");
+    assert(!matches.some((formatter) => formatter.id === "biome"), "biome should not claim markdown files");
+  });
+});
+
 test("analyzer matching: semgrep matches supported files", async () => {
   await withTempDir({
     "src/index.ts": "export const x = 1;",
@@ -1369,6 +1380,52 @@ exit 2
     assertEquals(result.findings[0]?.line, 2, "Broken link should map to the second line");
     assertEquals(result.findings[0]?.column, 10, "Broken link should map to the URL column");
     assert(result.findings[0]?.message.includes("404 Not Found"), `Expected lychee message to include HTTP details, got ${result.findings[0]?.message}`);
+  });
+});
+
+test("runAnalyzersForFile: markdownlint parses JSON findings from stderr", async () => {
+  await withTempDir({
+    ".pi": null,
+    "docs/README.md": "# Title\n## Section\n",
+  }, async (dir) => {
+    const fakeMarkdownlint = join(dir, "fake-markdownlint.sh");
+    await writeFile(fakeMarkdownlint, `#!/bin/sh
+file=""
+for arg in "$@"; do
+  file="$arg"
+done
+cat >&2 <<EOF
+[
+  {
+    "fileName": "$file",
+    "lineNumber": 2,
+    "ruleNames": ["MD022"],
+    "ruleDescription": "Headings should be surrounded by blank lines",
+    "errorDetail": "Expected: 1; Actual: 0; Above",
+    "errorContext": "## Section"
+  }
+]
+EOF
+exit 1
+`);
+    await chmod(fakeMarkdownlint, 0o755);
+    await writeFile(join(dir, ".pi/settings.json"), JSON.stringify({
+      analyzer: {
+        analyzers: {
+          semgrep: { disabled: true },
+          lychee: { disabled: true },
+          slopgrep: { disabled: true },
+          markdownlint: { command: fakeMarkdownlint },
+        },
+      },
+    }));
+
+    const result = await runAnalyzersForFile(join(dir, "docs/README.md"), dir);
+    assertIncludes(result.analyzerIds ?? [], "markdownlint", "markdownlint should be reported as the analyzer that ran");
+    assertEquals(result.findings.length, 1, "Expected one markdownlint finding");
+    assertEquals(result.findings[0]?.source, "markdownlint", "Expected markdownlint finding source");
+    assertEquals(result.findings[0]?.line, 2, "Expected markdownlint line number from stderr JSON");
+    assert(!result.error, `Did not expect stderr JSON to be treated as an analyzer error: ${result.error ?? ""}`);
   });
 });
 

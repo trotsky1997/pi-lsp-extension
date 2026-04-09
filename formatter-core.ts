@@ -150,14 +150,16 @@ function nodeBinaryFormatter(
 
 const JS_LIKE_EXTENSIONS = [
   ".js", ".jsx", ".cjs", ".mjs", ".ts", ".tsx", ".cts", ".mts",
-  ".json", ".jsonc", ".css", ".scss", ".less", ".html", ".md", ".mdx",
+  ".json", ".jsonc", ".css", ".scss", ".less", ".html",
   ".yaml", ".yml", ".vue", ".svelte", ".astro", ".graphql",
 ];
 
+const PRETTIER_EXTENSIONS = [...JS_LIKE_EXTENSIONS, ".md", ".mdx"];
+
 export const FORMATTERS: FormatterConfig[] = [
-  nodeBinaryFormatter("biome", JS_LIKE_EXTENSIONS, "biome", (file) => ["format", "--write", file], ["biome.json", "biome.jsonc", "package.json"]),
-  nodeBinaryFormatter("prettier", JS_LIKE_EXTENSIONS, "prettier", (file) => ["--write", file], ["package.json", ".prettierrc", ".prettierrc.json", "prettier.config.js", "prettier.config.cjs", "prettier.config.mjs"]),
   directBinaryFormatter("rumdl", [".md", ".mdx"], "rumdl", (file) => ["fmt", file]),
+  nodeBinaryFormatter("biome", JS_LIKE_EXTENSIONS, "biome", (file) => ["format", "--write", file], ["biome.json", "biome.jsonc", "package.json"]),
+  nodeBinaryFormatter("prettier", PRETTIER_EXTENSIONS, "prettier", (file) => ["--write", file], ["package.json", ".prettierrc", ".prettierrc.json", "prettier.config.js", "prettier.config.cjs", "prettier.config.mjs"]),
   directBinaryFormatter("ruff", [".py", ".pyi"], "ruff", (file) => ["format", file], ["pyproject.toml", "ruff.toml"]),
   directBinaryFormatter("uv", [".py", ".pyi"], "uv", (file) => ["tool", "run", "ruff", "format", file], ["pyproject.toml", "uv.lock"]),
   directBinaryFormatter("gofmt", [".go"], "gofmt", (file) => ["-w", file], ["go.mod", "go.work"]),
