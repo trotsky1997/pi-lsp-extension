@@ -52,6 +52,7 @@ import {
   FileChangeType,
 } from "vscode-languageserver-protocol";
 import { loadResolvedLspSettings, type LSPServerSettings, type PythonProvider, type ResolvedLSPSettings } from "./lsp-settings.js";
+import { getDevDocsHover } from "./devdocs-core.js";
 import { getOrCreateTreeSitterManager } from "./tree-sitter-core.js";
 
 // Config
@@ -1461,7 +1462,11 @@ export class LSPManager {
 
   async getHover(fp: string, line: number, col: number): Promise<Hover | null> {
     const l = await this.loadFile(fp);
-    if (!l) return getOrCreateTreeSitterManager().getHover(this.resolve(fp), line, col);
+    if (!l) {
+      const absPath = this.resolve(fp);
+      const treeSitterHover = getOrCreateTreeSitterManager().getHover(absPath, line, col);
+      return treeSitterHover ?? await getDevDocsHover(absPath, line, col);
+    }
     await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
     const pos = this.toPos(line, col);
     for (const c of this.getSupportedClients(l.clients, "hover")) {
@@ -1477,7 +1482,8 @@ export class LSPManager {
       }
       catch {}
     }
-    return getOrCreateTreeSitterManager().getHover(l.absPath, line, col);
+    const treeSitterHover = getOrCreateTreeSitterManager().getHover(l.absPath, line, col);
+    return treeSitterHover ?? await getDevDocsHover(l.absPath, line, col);
   }
 
   async getSignatureHelp(fp: string, line: number, col: number): Promise<SignatureHelp | null> {

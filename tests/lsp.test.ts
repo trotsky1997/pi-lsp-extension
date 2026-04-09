@@ -19,6 +19,7 @@ import { FORMATTERS, getFormatterConfigsForFile } from "../formatter-core.js";
 import { LSPManager, LSP_SERVERS, LANGUAGE_IDS } from "../lsp-core.js";
 import { loadResolvedLspSettings } from "../lsp-settings.js";
 import { resolveLspUiState } from "../lsp.js";
+import { extractDevDocsSymbolAtPosition, findBestDevDocsEntry, resetDevDocsCache, selectDevDocsDocsets } from "../devdocs-core.js";
 import { TreeSitterManager } from "../tree-sitter-core.js";
 
 // ============================================================================
@@ -1683,6 +1684,67 @@ export const answer = 42;
       assertEquals(filtered.length, 1, `Expected one filtered workspace symbol, got ${filtered.length}`);
       assertEquals(filtered[0]?.name, "Helper");
     } finally {
+      await manager.shutdown();
+    }
+  });
+});
+
+
+test("selectDevDocsDocsets: maps supported file types", async () => {
+  assertEquals(JSON.stringify(selectDevDocsDocsets("src/index.ts")), JSON.stringify(["typescript", "javascript"]), "TypeScript should prefer typescript then javascript docsets");
+  assertEquals(JSON.stringify(selectDevDocsDocsets("src/index.js")), JSON.stringify(["javascript"]), "JavaScript should use javascript docset");
+  assertEquals(JSON.stringify(selectDevDocsDocsets("src/app.py")), JSON.stringify(["python~3.14"]), "Python should use the Python docset");
+});
+
+test("extractDevDocsSymbolAtPosition: captures dotted symbol chains", async () => {
+  await withTempDir({
+    "sample.ts": "const fn = Array.map;\n",
+  }, async (dir) => {
+    const symbol = extractDevDocsSymbolAtPosition(join(dir, "sample.ts"), 0, 17);
+    assertEquals(symbol, "Array.map", "Expected dotted JavaScript symbol chain");
+  });
+});
+
+test("findBestDevDocsEntry: prefers exact and member matches", async () => {
+  const entry = findBestDevDocsEntry([
+    { name: "Map", path: "global_objects/map", type: "Map" },
+    { name: "Array.map", path: "global_objects/array/map", type: "Array" },
+    { name: "Iterator.map", path: "global_objects/iterator/map", type: "Iterator" },
+  ], "Array.map");
+
+  assertEquals(entry?.name, "Array.map", "Expected exact DevDocs match for Array.map");
+});
+
+test("LSPManager: falls back to DevDocs hover when no hover is available", async () => {
+  await withTempDir({
+    "sample.ts": "const fn = Array.map;\n",
+  }, async (dir) => {
+    const originalFetch = globalThis.fetch;
+    resetDevDocsCache();
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      entries: [
+        { name: "Array.map", path: "global_objects/array/map", type: "Array" },
+      ],
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })) as typeof fetch;
+
+    const manager = new LSPManager(dir);
+    try {
+      const hover = await manager.getHover(join(dir, "sample.ts"), 1, 18);
+      assert(hover !== null, "Expected DevDocs hover fallback");
+      const contents = typeof hover.contents === "string"
+        ? hover.contents
+        : Array.isArray(hover.contents)
+          ? hover.contents.map((item) => typeof item === "string" ? item : item.value).join("\n")
+          : hover.contents.value;
+      assert(contents.includes("Documentation provider: DevDocs"), `Expected DevDocs provider marker, got: ${contents}`);
+      assert(contents.includes("Array.map"), `Expected matched entry name, got: ${contents}`);
+      assert(contents.includes("https://devdocs.io/") && contents.includes("global_objects/array/map"), `Expected DevDocs URL, got: ${contents}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+      resetDevDocsCache();
       await manager.shutdown();
     }
   });
