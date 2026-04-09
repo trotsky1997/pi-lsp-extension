@@ -16,7 +16,7 @@ process.on('uncaughtException', (err) => {
 import { mkdtemp, rm, writeFile, mkdir } from "fs/promises";
 import { existsSync, statSync } from "fs";
 import { tmpdir } from "os";
-import { join, delimiter } from "path";
+import { join, delimiter, resolve } from "path";
 import { LSPManager } from "../lsp-core.js";
 
 // ============================================================================
@@ -98,6 +98,29 @@ test("typescript: detects type errors", async () => {
   } finally {
     await manager.shutdown();
     await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("typescript: detects syntax errors in fixture project", async () => {
+  if (!commandExists("typescript-language-server")) {
+    skip("typescript-language-server not installed");
+  }
+
+  const dir = resolve(process.cwd(), "tests/fixtures/ts-syntax-error");
+  const manager = new LSPManager(dir);
+
+  try {
+    const file = join(dir, "src/index.ts");
+    const { diagnostics, receivedResponse } = await manager.touchFileAndWait(file, 10000);
+
+    assert(receivedResponse, "Expected TypeScript LSP to respond for fixture project");
+    assert(diagnostics.length > 0, `Expected syntax errors, got ${diagnostics.length}`);
+    assert(
+      diagnostics.some(d => d.severity === 1),
+      `Expected at least one error diagnostic, got: ${diagnostics.map(d => d.message).join(", ")}`
+    );
+  } finally {
+    await manager.shutdown();
   }
 });
 

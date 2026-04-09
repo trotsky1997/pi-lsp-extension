@@ -38,6 +38,14 @@ function diagnosticsWaitMsForFile(filePath: string): number {
   if (ext === ".rs") return 20000;
   return DIAGNOSTICS_WAIT_MS_DEFAULT;
 }
+
+function diagnosticsReplayWaitMsForFile(filePath: string): number {
+  const ext = path.extname(filePath).toLowerCase();
+  if ([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"].includes(ext)) {
+    return Math.max(diagnosticsWaitMsForFile(filePath), 10000);
+  }
+  return diagnosticsWaitMsForFile(filePath);
+}
 const DIAGNOSTICS_PREVIEW_LINES = 10;
 const LSP_IDLE_SHUTDOWN_MS = 2 * 60 * 1000;
 const DIM = "\x1b[2m", GREEN = "\x1b[32m", YELLOW = "\x1b[33m", RESET = "\x1b[0m";
@@ -47,6 +55,8 @@ const DEFAULT_FORMATTER_HOOK_MODE: FormatterHookMode = "write";
 const DEFAULT_ANALYZER_HOOK_MODE: AnalyzerHookMode = "agent_end";
 const SETTINGS_NAMESPACE = "lsp";
 const LSP_CONFIG_ENTRY = "lsp-hook-config";
+const PENDING_DIAGNOSTIC_MAX_AGE_MS = 30_000;
+const PENDING_DIAGNOSTIC_MAX_FILES = 64;
 
 const WARMUP_MAP: Record<string, string> = {
   "pubspec.yaml": ".dart",
@@ -225,6 +235,55 @@ function getScopedSettingOrigin(globalValue: unknown, projectValue: unknown): Ho
   return projectValue !== undefined ? "project" : globalValue !== undefined ? "global" : "global";
 }
 
+export function extractApplyPatchPaths(patch: string): string[] {
+  const paths: string[] = [];
+
+  for (const line of patch.split(/\r?\n/)) {
+    if (line.startsWith("*** Add File: ")) {
+      paths.push(line.slice("*** Add File: ".length).trim());
+      continue;
+    }
+    if (line.startsWith("*** Update File: ")) {
+      paths.push(line.slice("*** Update File: ".length).trim());
+      continue;
+    }
+    if (line.startsWith("*** Move to: ")) {
+      const nextPath = line.slice("*** Move to: ".length).trim();
+      if (paths.length > 0) paths[paths.length - 1] = nextPath;
+    }
+  }
+
+  return [...new Set(paths.filter(Boolean))];
+}
+
+interface PendingDiagnosticState {
+  includeWarnings: boolean;
+  lastTouchedAt: number;
+}
+
+export function selectPendingDiagnosticsForConfig(
+  configPath: string,
+  pendingFiles: Map<string, PendingDiagnosticState>,
+  now = Date.now(),
+  maxAgeMs = PENDING_DIAGNOSTIC_MAX_AGE_MS,
+): Array<{ filePath: string; includeWarnings: boolean }> {
+  const configRoot = path.dirname(path.resolve(configPath));
+  const matches: Array<{ filePath: string; includeWarnings: boolean; lastTouchedAt: number }> = [];
+
+  for (const [filePath, state] of pendingFiles.entries()) {
+    if (now - state.lastTouchedAt > maxAgeMs) continue;
+
+    const relativePath = path.relative(configRoot, path.resolve(filePath));
+    const isWithinRoot = relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+    if (!isWithinRoot) continue;
+
+    matches.push({ filePath, includeWarnings: state.includeWarnings, lastTouchedAt: state.lastTouchedAt });
+  }
+
+  matches.sort((a, b) => b.lastTouchedAt - a.lastTouchedAt);
+  return matches.map(({ filePath, includeWarnings }) => ({ filePath, includeWarnings }));
+}
+
 export function resolveLspUiState(
   cwd: string,
   sessionEntry?: LspConfigEntry,
@@ -326,6 +385,7 @@ export default function (pi: ExtensionAPI) {
 
   const touchedFiles: Map<string, boolean> = new Map();
   const pendingToolFileExists = new Map<string, boolean>();
+  const pendingDiagnostics = new Map<string, PendingDiagnosticState>();
   const globalSettingsPath = path.join(os.homedir(), ".pi", "agent", "settings.json");
 
   function isLspSettingsFile(filePath: string, cwd: string): boolean {
@@ -456,6 +516,39 @@ export default function (pi: ExtensionAPI) {
     return path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
   }
 
+  function prunePendingDiagnostics(now = Date.now()): void {
+    for (const [filePath, state] of pendingDiagnostics.entries()) {
+      if (now - state.lastTouchedAt > PENDING_DIAGNOSTIC_MAX_AGE_MS) {
+        pendingDiagnostics.delete(filePath);
+      }
+    }
+
+    if (pendingDiagnostics.size <= PENDING_DIAGNOSTIC_MAX_FILES) return;
+
+    const overflow = [...pendingDiagnostics.entries()]
+      .sort((a, b) => a[1].lastTouchedAt - b[1].lastTouchedAt)
+      .slice(0, pendingDiagnostics.size - PENDING_DIAGNOSTIC_MAX_FILES);
+    for (const [filePath] of overflow) pendingDiagnostics.delete(filePath);
+  }
+
+  function rememberPendingDiagnostic(filePath: string, includeWarnings: boolean): void {
+    const now = Date.now();
+    const existing = pendingDiagnostics.get(filePath);
+    pendingDiagnostics.set(filePath, {
+      includeWarnings: (existing?.includeWarnings ?? false) || includeWarnings,
+      lastTouchedAt: now,
+    });
+    prunePendingDiagnostics(now);
+  }
+
+  function takePendingDiagnosticsForConfig(configPath: string): Array<{ filePath: string; includeWarnings: boolean }> {
+    const now = Date.now();
+    prunePendingDiagnostics(now);
+    const matches = selectPendingDiagnosticsForConfig(configPath, pendingDiagnostics, now);
+    for (const match of matches) pendingDiagnostics.delete(match.filePath);
+    return matches;
+  }
+
   pi.registerMessageRenderer("lsp-diagnostics", (message, options, theme) => {
     const content = formatDiagnosticsForDisplay(messageContentToText(message.content));
     if (!content) return new Text("", 0, 0);
@@ -546,13 +639,30 @@ export default function (pi: ExtensionAPI) {
   function shouldRunFormatterForTool(toolName: string): boolean {
     if (!formatterEnabled || formatterHookMode === "disabled") return false;
     if (formatterHookMode === "write") return toolName === "write";
-    return toolName === "write" || toolName === "edit";
+    return toolName === "write" || toolName === "edit" || toolName === "apply_patch";
   }
 
   function shouldRunAnalyzerForTool(toolName: string): boolean {
     if (!analyzerEnabled || analyzerHookMode === "disabled" || analyzerHookMode === "agent_end") return false;
     if (analyzerHookMode === "write") return toolName === "write";
-    return toolName === "write" || toolName === "edit";
+    return toolName === "write" || toolName === "edit" || toolName === "apply_patch";
+  }
+
+  function extractToolFilePaths(toolName: string, input: Record<string, unknown>): string[] {
+    if (toolName === "apply_patch" || typeof input.patch === "string") {
+      const patch = typeof input.patch === "string" ? input.patch : "";
+      return extractApplyPatchPaths(patch);
+    }
+
+    const filePath = typeof input.path === "string" ? input.path : undefined;
+    return filePath ? [filePath] : [];
+  }
+
+  function isMutationTool(toolName: string, input: Record<string, unknown>): boolean {
+    return toolName === "write"
+      || toolName === "edit"
+      || toolName === "apply_patch"
+      || typeof input.patch === "string";
   }
 
   function buildFormatterMessage(cwd: string, filePath: string, formatterId: string, changed: boolean, error?: string): string {
@@ -734,13 +844,14 @@ export default function (pi: ExtensionAPI) {
     includeWarnings: boolean,
     includeFileHeader: boolean,
     notify = true,
+    waitMs = diagnosticsWaitMsForFile(filePath),
   ): Promise<string | undefined> {
     const manager = getOrCreateManager(ctx.cwd);
     const absPath = ensureActiveClientForFile(filePath, ctx.cwd);
     if (!absPath) return undefined;
 
     try {
-      const result = await manager.touchFileAndWait(absPath, diagnosticsWaitMsForFile(absPath));
+      const result = await manager.touchFileAndWait(absPath, waitMs);
       if (!result.receivedResponse) return undefined;
 
       const diagnostics = includeWarnings
@@ -874,21 +985,24 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    if (event.toolName !== "read" && event.toolName !== "write" && event.toolName !== "edit") return;
+    if (event.toolName !== "read" && !isMutationTool(event.toolName, input)) return;
 
     clearIdleShutdownTimer();
-    const filePath = typeof input.path === "string" ? input.path : undefined;
-    if (!filePath) return;
+    const filePaths = extractToolFilePaths(event.toolName, input);
+    if (filePaths.length === 0) return;
 
-    if (event.toolName === "write" || event.toolName === "edit") {
-      const absolutePath = normalizeFilePath(filePath, ctx.cwd);
-      pendingToolFileExists.set(absolutePath, fs.existsSync(absolutePath));
+    if (isMutationTool(event.toolName, input)) {
+      for (const filePath of filePaths) {
+        const absolutePath = normalizeFilePath(filePath, ctx.cwd);
+        pendingToolFileExists.set(absolutePath, fs.existsSync(absolutePath));
+      }
     }
 
-    const absPath = ensureActiveClientForFile(filePath, ctx.cwd);
-    if (!absPath) return;
-
-    void getOrCreateManager(ctx.cwd).getClientsForFile(absPath).catch(() => {});
+    for (const filePath of filePaths) {
+      const absPath = ensureActiveClientForFile(filePath, ctx.cwd);
+      if (!absPath) continue;
+      void getOrCreateManager(ctx.cwd).getClientsForFile(absPath).catch(() => {});
+    }
   });
 
   pi.on("agent_start", async () => {
@@ -973,78 +1087,131 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_result", async (event, ctx) => {
-    if (event.toolName !== "write" && event.toolName !== "edit") return;
-
-    const filePath = event.input.path as string;
-    if (!filePath) return;
+    const input = (event.input && typeof event.input === "object")
+      ? event.input as Record<string, unknown>
+      : {};
+    if (!isMutationTool(event.toolName, input)) return;
+    const filePaths = extractToolFilePaths(event.toolName, input);
+    if (filePaths.length === 0) return;
 
     const manager = getOrCreateManager(ctx.cwd);
-    const normalizedPath = normalizeFilePath(filePath, ctx.cwd);
-    const existedBefore = pendingToolFileExists.get(normalizedPath) ?? true;
-    pendingToolFileExists.delete(normalizedPath);
+    const extras: string[] = [];
 
-    let formatterMessage: string | undefined;
-    if (shouldRunFormatterForTool(event.toolName)) {
-      const formatted = await runFormatterForFile(normalizedPath, ctx.cwd);
-      if (formatted.formatterId) {
-        formatterMessage = buildFormatterMessage(
-          ctx.cwd,
-          normalizedPath,
-          formatted.formatterId,
-          formatted.changed,
-          formatted.error,
-        );
-      }
-    }
-
-    let analyzerMessage: string | undefined;
-    if (shouldRunAnalyzerForTool(event.toolName)) {
-      const analyzed = await runAnalyzersForFile(normalizedPath, ctx.cwd);
-      if (analyzed.analyzerIds && analyzed.analyzerIds.length > 0) {
-        analyzerMessage = buildMultiAnalyzerMessage(
-          ctx.cwd,
-          normalizedPath,
-          analyzed.analyzerIds,
-          analyzed.findings.length,
-          analyzed.findings,
-          analyzed.errors,
-        );
-      }
-    }
-
-    await manager.notifyWorkspaceFileEvent(
-      normalizedPath,
-      existedBefore ? FileChangeType.Changed : FileChangeType.Created,
-    );
-
-    if (isLspSettingsFile(normalizedPath, ctx.cwd)) {
-      await manager.restartAllClients();
-      activeClients.clear();
-      restoreHookState(ctx);
-      updateLspStatus();
-    } else if (shouldReloadProjectConfig(normalizedPath, ctx.cwd)) {
-      await manager.restartClientsForPath(normalizedPath);
-    }
-
-    const absPath = ensureActiveClientForFile(filePath, ctx.cwd);
-    if (!absPath) return;
-
-    await manager.openFile(absPath).catch(() => false);
-
-    if (hookMode === "disabled") return;
-
-    if (hookMode === "agent_end") {
+    for (const filePath of filePaths) {
+      const normalizedPath = normalizeFilePath(filePath, ctx.cwd);
+      const existedBefore = pendingToolFileExists.get(normalizedPath) ?? true;
+      pendingToolFileExists.delete(normalizedPath);
       const includeWarnings = event.toolName === "write";
-      const existing = touchedFiles.get(absPath) ?? false;
-      touchedFiles.set(absPath, existing || includeWarnings);
-      return;
+
+      let formatterMessage: string | undefined;
+      if (shouldRunFormatterForTool(event.toolName)) {
+        const formatted = await runFormatterForFile(normalizedPath, ctx.cwd);
+        if (formatted.formatterId) {
+          formatterMessage = buildFormatterMessage(
+            ctx.cwd,
+            normalizedPath,
+            formatted.formatterId,
+            formatted.changed,
+            formatted.error,
+          );
+        }
+      }
+
+      let analyzerMessage: string | undefined;
+      if (shouldRunAnalyzerForTool(event.toolName)) {
+        const analyzed = await runAnalyzersForFile(normalizedPath, ctx.cwd);
+        if (analyzed.analyzerIds && analyzed.analyzerIds.length > 0) {
+          analyzerMessage = buildMultiAnalyzerMessage(
+            ctx.cwd,
+            normalizedPath,
+            analyzed.analyzerIds,
+            analyzed.findings.length,
+            analyzed.findings,
+            analyzed.errors,
+          );
+        }
+      }
+
+      await manager.notifyWorkspaceFileEvent(
+        normalizedPath,
+        existedBefore ? FileChangeType.Changed : FileChangeType.Created,
+      );
+
+      const configChanged = shouldReloadProjectConfig(normalizedPath, ctx.cwd);
+      if (isLspSettingsFile(normalizedPath, ctx.cwd)) {
+        await manager.restartAllClients();
+        activeClients.clear();
+        restoreHookState(ctx);
+        updateLspStatus();
+      } else if (configChanged) {
+        await manager.restartClientsForPath(normalizedPath);
+      }
+
+      const filesToCheck: Array<{ filePath: string; includeWarnings: boolean }> = [{ filePath, includeWarnings }];
+      if (configChanged) {
+        filesToCheck.push(...takePendingDiagnosticsForConfig(normalizedPath));
+      }
+
+      let formatterAnalyzerAdded = false;
+      for (const candidate of filesToCheck) {
+        const absPath = ensureActiveClientForFile(candidate.filePath, ctx.cwd);
+        if (!absPath) {
+          rememberPendingDiagnostic(normalizeFilePath(candidate.filePath, ctx.cwd), candidate.includeWarnings);
+          if (!formatterAnalyzerAdded) {
+            if (formatterMessage) extras.push(formatterMessage);
+            if (analyzerMessage) extras.push(analyzerMessage);
+            formatterAnalyzerAdded = true;
+          }
+          continue;
+        }
+
+        pendingDiagnostics.delete(absPath);
+        await manager.openFile(absPath).catch(() => false);
+
+        if (hookMode === "disabled") {
+          if (!formatterAnalyzerAdded) {
+            if (formatterMessage) extras.push(formatterMessage);
+            if (analyzerMessage) extras.push(analyzerMessage);
+            formatterAnalyzerAdded = true;
+          }
+          continue;
+        }
+
+        if (hookMode === "agent_end") {
+          const existing = touchedFiles.get(absPath) ?? false;
+          touchedFiles.set(absPath, existing || candidate.includeWarnings);
+          if (!formatterAnalyzerAdded) {
+            if (formatterMessage) extras.push(formatterMessage);
+            if (analyzerMessage) extras.push(analyzerMessage);
+            formatterAnalyzerAdded = true;
+          }
+          continue;
+        }
+
+        const output = await collectDiagnostics(
+          absPath,
+          ctx,
+          candidate.includeWarnings,
+          false,
+          true,
+          configChanged && candidate.filePath !== filePath
+            ? diagnosticsReplayWaitMsForFile(absPath)
+            : diagnosticsWaitMsForFile(absPath),
+        );
+        const extra = [
+          !formatterAnalyzerAdded ? formatterMessage : undefined,
+          !formatterAnalyzerAdded ? analyzerMessage : undefined,
+          output,
+        ].filter(Boolean).join("");
+        formatterAnalyzerAdded = true;
+        if (extra) extras.push(extra);
+      }
     }
 
-    const includeWarnings = event.toolName === "write";
-    const output = await collectDiagnostics(absPath, ctx, includeWarnings, false);
-    if (!output && !formatterMessage && !analyzerMessage) return;
+    if (extras.length === 0 || hookMode === "agent_end" || hookMode === "disabled") return;
 
-    const extra = [formatterMessage, analyzerMessage, output].filter(Boolean).join("");
-    return { content: [...event.content, { type: "text" as const, text: extra }] as Array<{ type: "text"; text: string }> };
+    return {
+      content: [...event.content, { type: "text" as const, text: extras.join("") }] as Array<{ type: "text"; text: string }>,
+    };
   });
 }

@@ -35,6 +35,7 @@ import {
   formatWorkspaceSymbolResult,
 } from "../lsp-tool-formatters.js";
 import { safeParseLspToolInput } from "../lsp-tool-schemas.js";
+import { extractApplyPatchPaths, selectPendingDiagnosticsForConfig } from "../lsp.js";
 
 // ============================================================================
 // uriToPath tests
@@ -164,6 +165,59 @@ test("formatDiagnostic: formats hint", () => {
   };
   const result = formatDiagnostic(diag as any);
   assertEqual(result, "HINT [1:1] Prefer arrow function");
+});
+
+test("extractApplyPatchPaths: finds add and update targets", () => {
+  const result = extractApplyPatchPaths(`*** Begin Patch
+*** Add File: src/new.ts
++const value = 1;
+*** Update File: src/existing.ts
+@@
+-const oldValue = 1;
++const oldValue = 2;
+*** End Patch`);
+
+  assertEqual(result, ["src/new.ts", "src/existing.ts"]);
+});
+
+test("extractApplyPatchPaths: tracks moved path", () => {
+  const result = extractApplyPatchPaths(`*** Begin Patch
+*** Update File: src/old.ts
+*** Move to: src/new.ts
+@@
+-export const value = 1;
++export const value = 2;
+*** End Patch`);
+
+  assertEqual(result, ["src/new.ts"]);
+});
+
+test("selectPendingDiagnosticsForConfig: returns recent files under config root", () => {
+  const pending = new Map([
+    ["/workspace/app/src/first.ts", { includeWarnings: false, lastTouchedAt: 950 }],
+    ["/workspace/app/src/second.ts", { includeWarnings: true, lastTouchedAt: 980 }],
+    ["/workspace/other/outside.ts", { includeWarnings: true, lastTouchedAt: 990 }],
+  ]);
+
+  const result = selectPendingDiagnosticsForConfig("/workspace/app/tsconfig.json", pending as any, 1000, 100);
+
+  assertEqual(result, [
+    { filePath: "/workspace/app/src/second.ts", includeWarnings: true },
+    { filePath: "/workspace/app/src/first.ts", includeWarnings: false },
+  ]);
+});
+
+test("selectPendingDiagnosticsForConfig: drops stale files", () => {
+  const pending = new Map([
+    ["/workspace/app/src/stale.ts", { includeWarnings: true, lastTouchedAt: 100 }],
+    ["/workspace/app/src/fresh.ts", { includeWarnings: false, lastTouchedAt: 980 }],
+  ]);
+
+  const result = selectPendingDiagnosticsForConfig("/workspace/app/package.json", pending as any, 1000, 100);
+
+  assertEqual(result, [
+    { filePath: "/workspace/app/src/fresh.ts", includeWarnings: false },
+  ]);
 });
 
 // ============================================================================
