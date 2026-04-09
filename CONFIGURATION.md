@@ -214,6 +214,7 @@ Each entry under `analyzer.tools.<analyzerId>` or `analyzer.analyzers.<analyzerI
 - `golangci-lint`
 - `hadolint`
 - `karpeslop`
+- `lychee`
 - `markdownlint`
 - `ruff-check`
 - `semgrep`
@@ -331,6 +332,7 @@ Global and project settings are merged with these rules:
 - `ruff-check` for Python
 - `golangci-lint` for Go
 - `markdownlint` for Markdown
+- `lychee` for broken-link checks in Markdown, HTML, and doc-like text files
 - `shellcheck` for shell scripts
 - `hadolint` for `Dockerfile`
 - `slopgrep` for Markdown, prose-heavy text files, and LaTeX prose

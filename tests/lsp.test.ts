@@ -10,11 +10,11 @@
  * - Server configuration correctness
  */
 
-import { mkdtemp, rm, writeFile, mkdir } from "fs/promises";
+import { chmod, mkdtemp, rm, writeFile, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
-import { ANALYZERS, getAnalyzerConfigsForFile } from "../analyzer-core.js";
+import { ANALYZERS, getAnalyzerConfigsForFile, runAnalyzersForFile } from "../analyzer-core.js";
 import { FORMATTERS, getFormatterConfigsForFile } from "../formatter-core.js";
 import { LSPManager, LSP_SERVERS, LANGUAGE_IDS } from "../lsp-core.js";
 import { loadResolvedLspSettings } from "../lsp-settings.js";
@@ -222,7 +222,7 @@ test("ANALYZERS: includes semgrep", async () => {
 });
 
 test("ANALYZERS: includes common linter-style analyzers", async () => {
-  const ids = ["ruff-check", "golangci-lint", "markdownlint", "shellcheck", "hadolint", "slopgrep", "sloppylint", "karpeslop"];
+  const ids = ["ruff-check", "golangci-lint", "markdownlint", "lychee", "shellcheck", "hadolint", "slopgrep", "sloppylint", "karpeslop"];
   for (const id of ids) {
     assert(ANALYZERS.some((analyzer) => analyzer.id === id), `Should have ${id} analyzer`);
   }
@@ -1215,6 +1215,24 @@ test("analyzer matching: markdownlint matches markdown files", async () => {
   });
 });
 
+test("analyzer matching: lychee matches markdown files", async () => {
+  await withTempDir({
+    "README.md": "# hello",
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "README.md"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "lychee"), "lychee should match markdown files");
+  });
+});
+
+test("analyzer matching: lychee matches html files", async () => {
+  await withTempDir({
+    "site/index.html": '<a href="https://example.invalid/docs">broken</a>',
+  }, async (dir) => {
+    const matches = getAnalyzerConfigsForFile(join(dir, "site/index.html"), dir);
+    assert(matches.some((analyzer) => analyzer.id === "lychee"), "lychee should match html files");
+  });
+});
+
 test("analyzer matching: slopgrep matches prose files", async () => {
   await withTempDir({
     "docs/notes.md": "Here is a note.",
@@ -1303,6 +1321,54 @@ test("analyzer matching: multiple analyzers can match one ts file", async () => 
     const matches = getAnalyzerConfigsForFile(join(dir, "src/app.ts"), dir);
     assert(matches.some((analyzer) => analyzer.id === "semgrep"), "semgrep should match ts files");
     assert(matches.some((analyzer) => analyzer.id === "karpeslop"), "karpeslop should also match ts files");
+  });
+});
+
+test("runAnalyzersForFile: lychee maps broken links back to source lines", async () => {
+  await withTempDir({
+    ".pi": null,
+    "docs/README.md": "[good](https://example.com)\n[broken](https://example.invalid/docs)\n",
+  }, async (dir) => {
+    const fakeLychee = join(dir, "fake-lychee.sh");
+    await writeFile(fakeLychee, `#!/bin/sh
+file=""
+for arg in "$@"; do
+  file="$arg"
+done
+cat <<EOF
+{
+  "error_map": {
+    "$file": [
+      {
+        "url": "https://example.invalid/docs",
+        "status": {
+          "text": "HTTP status client error (404 Not Found)",
+          "details": "404 Not Found"
+        }
+      }
+    ]
+  }
+}
+EOF
+exit 2
+`);
+    await chmod(fakeLychee, 0o755);
+    await writeFile(join(dir, ".pi/settings.json"), JSON.stringify({
+      analyzer: {
+        analyzers: {
+          lychee: { command: fakeLychee },
+          markdownlint: { disabled: true },
+          slopgrep: { disabled: true },
+        },
+      },
+    }));
+
+    const result = await runAnalyzersForFile(join(dir, "docs/README.md"), dir);
+    assertIncludes(result.analyzerIds ?? [], "lychee", "lychee should be reported as the analyzer that ran");
+    assertEquals(result.findings.length, 1, "Expected one lychee finding");
+    assertEquals(result.findings[0]?.line, 2, "Broken link should map to the second line");
+    assertEquals(result.findings[0]?.column, 10, "Broken link should map to the URL column");
+    assert(result.findings[0]?.message.includes("404 Not Found"), `Expected lychee message to include HTTP details, got ${result.findings[0]?.message}`);
   });
 });
 

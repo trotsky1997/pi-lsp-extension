@@ -6,7 +6,7 @@ Config-first code intelligence for `pi-coding-agent`.
 
 - `lsp` for language servers and editor-style code intelligence
 - `formatter` for format-on-write tools
-- `analyzer` for non-LSP diagnostics such as `semgrep`, `ruff-check`, and `shellcheck`
+- `analyzer` for non-LSP diagnostics such as `semgrep`, `ruff-check`, `shellcheck`, and `lychee`
 
 It also ships a reusable setup skill at `skills/lsp-configurator/` for interactive configuration.
 
@@ -149,6 +149,7 @@ Built-in analyzer IDs:
 - `golangci-lint`
 - `hadolint`
 - `karpeslop`
+- `lychee`
 - `markdownlint`
 - `ruff-check`
 - `semgrep`
@@ -172,6 +173,7 @@ npm i -g vscode-langservers-extracted   # eslint, html, css, json
 npm i -g yaml-language-server bash-language-server
 uv tool install semgrep
 uv tool install git+https://github.com/trotsky1997/slopgrep.git
+cargo install lychee
 
 # Vue / Svelte / Astro / Prisma
 npm i -g @vue/language-server svelte-language-server @astrojs/language-server
@@ -227,10 +229,11 @@ Notes:
 - `sourcekit-lsp`, `dart format`, `mix format`, `gofmt`, and `rustfmt` often come from their main toolchains.
 - `rumdl` provides both the Markdown LSP (`rumdl server`) and formatter (`rumdl fmt`).
 - `semgrep` is an analyzer, not an LSP or formatter.
+- `lychee` checks broken links in Markdown, HTML, and other doc-like text files.
 - `slopgrep` is useful for prose-heavy repositories and AI-writing-tell scanning in Markdown, text, or LaTeX files.
 - `sloppylint` focuses on Python AI-code anti-patterns.
 - `karpeslop` focuses on TypeScript / JavaScript / React AI-slop detection.
-- Common analyzer-style tools bundled today are `semgrep`, `ruff check`, `golangci-lint run`, `markdownlint`, `shellcheck`, `hadolint`, `slopgrep`, `sloppylint`, and `karpeslop`.
+- Common analyzer-style tools bundled today are `semgrep`, `ruff check`, `golangci-lint run`, `markdownlint`, `lychee`, `shellcheck`, `hadolint`, `slopgrep`, `sloppylint`, and `karpeslop`.
 - Package names vary by OS and package manager; the important part is that the expected executable is on `PATH`.
 
 ## Commands

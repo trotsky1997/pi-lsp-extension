@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { getFormatterEnv, loadResolvedLspSettings, type AnalyzerSettings } from "./lsp-settings.js";
 
 interface AnalyzerCommand {
@@ -149,6 +150,83 @@ function readOutputFileIfPresent(command: AnalyzerCommand, stdout: string): stri
     if (fs.existsSync(command.outputFile)) return fs.readFileSync(command.outputFile, "utf-8");
   } catch {}
   return stdout;
+}
+
+function indexToLineColumn(source: string, index: number): { line: number; column: number } {
+  let line = 1;
+  let column = 1;
+  for (let i = 0; i < index; i++) {
+    if (source[i] === "\n") {
+      line += 1;
+      column = 1;
+    } else {
+      column += 1;
+    }
+  }
+  return { line, column };
+}
+
+function normalizeLinkPathForSource(value: string): string {
+  return value.split(path.sep).join("/");
+}
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function buildLycheeCandidates(filePath: string, rawUrl: string): string[] {
+  const candidates = new Set<string>();
+  const decodedUrl = safeDecodeURIComponent(rawUrl);
+  candidates.add(rawUrl);
+  candidates.add(decodedUrl);
+
+  try {
+    if (decodedUrl.startsWith("file://")) {
+      const targetPath = fileURLToPath(decodedUrl);
+      const normalizedTargetPath = normalizeLinkPathForSource(targetPath);
+      const relativePath = normalizeLinkPathForSource(path.relative(path.dirname(filePath), targetPath));
+
+      candidates.add(normalizedTargetPath);
+      candidates.add(relativePath);
+      if (relativePath && !relativePath.startsWith(".")) candidates.add(`./${relativePath}`);
+      candidates.add(path.basename(targetPath));
+    }
+  } catch {
+    // Ignore URL parsing issues and keep best-effort string matching.
+  }
+
+  return [...candidates].filter(Boolean).sort((left, right) => right.length - left.length);
+}
+
+function formatLycheeUrl(filePath: string, rawUrl: string): string {
+  try {
+    if (rawUrl.startsWith("file://")) {
+      const targetPath = fileURLToPath(rawUrl);
+      const relativePath = normalizeLinkPathForSource(path.relative(path.dirname(filePath), targetPath));
+      if (!relativePath) return path.basename(targetPath);
+      return relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
+    }
+  } catch {
+    // Fall through to the original URL.
+  }
+  return safeDecodeURIComponent(rawUrl);
+}
+
+function findLycheeLocation(filePath: string, rawUrl: string): { line: number; column: number } {
+  try {
+    const source = fs.readFileSync(filePath, "utf-8");
+    for (const candidate of buildLycheeCandidates(filePath, rawUrl)) {
+      const index = source.indexOf(candidate);
+      if (index >= 0) return indexToLineColumn(source, index);
+    }
+  } catch {
+    // Ignore file read errors and fall back to 1:1.
+  }
+  return { line: 1, column: 1 };
 }
 
 function parseSemgrepOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
@@ -412,6 +490,44 @@ function parseKarpeSlopOutput(stdout: string, fallbackFilePath: string, command:
   }
 }
 
+function parseLycheeOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
+  try {
+    const parsed = JSON.parse(readOutputFileIfPresent(command, stdout)) as {
+      error_map?: Record<string, Array<{
+        url?: string;
+        status?: { text?: string; details?: string };
+      }>>;
+    };
+
+    const findings: AnalyzerFinding[] = [];
+    for (const [inputPath, issues] of Object.entries(parsed.error_map ?? {})) {
+      const resolvedPath = path.isAbsolute(inputPath)
+        ? inputPath
+        : inputPath && inputPath !== "-"
+          ? path.resolve(command.cwd, inputPath)
+          : fallbackFilePath;
+
+      for (const issue of issues ?? []) {
+        const url = issue.url ?? "unknown link";
+        const statusText = issue.status?.text ?? "Broken link";
+        const details = issue.status?.details ? ` - ${issue.status.details}` : "";
+        const position = findLycheeLocation(resolvedPath, url);
+        findings.push({
+          source: "lychee",
+          message: `${formatLycheeUrl(resolvedPath, url)} - ${statusText}${details}`,
+          severity: "warning",
+          filePath: resolvedPath,
+          line: position.line,
+          column: position.column,
+        });
+      }
+    }
+    return findings;
+  } catch {
+    return [];
+  }
+}
+
 const DEFAULT_SEMGREP_EXTENSIONS = [
   ".js", ".jsx", ".ts", ".tsx", ".py", ".go", ".java", ".rb", ".php", ".yaml", ".yml",
   ".tf", ".c", ".cc", ".cpp", ".cs", ".kt", ".swift", ".scala", ".sh", ".md",
@@ -448,6 +564,14 @@ export const ANALYZERS: AnalyzerConfig[] = [
     "markdownlint",
     (file) => ({ args: ["--json", file] }),
     parseMarkdownlintOutput,
+  ),
+  directBinaryAnalyzer(
+    "lychee",
+    [".md", ".mdx", ".markdown", ".html", ".htm", ".txt", ".xml", ".css"],
+    "lychee",
+    (file) => ({ args: ["--format", "json", "--no-progress", file] }),
+    parseLycheeOutput,
+    { rootMarkers: ["lychee.toml", ".lycheeignore", ".git"] },
   ),
   directBinaryAnalyzer(
     "shellcheck",

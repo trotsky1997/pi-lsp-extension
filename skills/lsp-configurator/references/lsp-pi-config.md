@@ -107,6 +107,7 @@ Common keys:
 - `ruff-check`
 - `golangci-lint`
 - `karpeslop`
+- `lychee`
 - `markdownlint`
 - `shellcheck`
 - `hadolint`
@@ -123,6 +124,7 @@ Common keys:
 - Go: `gopls`, formatter `gofmt`, analyzer `golangci-lint`
 - Rust: `rust-analyzer`, formatter `rustfmt`
 - Markdown: `markdown`, formatter `rumdl`, analyzer `markdownlint`
+- Markdown broken-link checks: optionally add analyzer `lychee`
 - Markdown / prose-heavy docs: optionally add analyzer `slopgrep`
 - LaTeX: `texlab`, and optionally analyzer `slopgrep`
 - Shell: formatter `shfmt`, analyzer `shellcheck`
