@@ -382,6 +382,7 @@ export default function (pi: ExtensionAPI) {
   let diagnosticsAbort: AbortController | null = null;
   let shuttingDown = false;
   let idleShutdownTimer: NodeJS.Timeout | null = null;
+  const mutationToolResultsSeen = new Set<string>();
 
   const touchedFiles: Map<string, boolean> = new Map();
   const pendingToolFileExists = new Map<string, boolean>();
@@ -1012,87 +1013,16 @@ export default function (pi: ExtensionAPI) {
     setActivity("idle");
     touchedFiles.clear();
     pendingToolFileExists.clear();
+    mutationToolResultsSeen.clear();
   });
 
-  function agentWasAborted(event: any): boolean {
-    const messages = Array.isArray(event?.messages) ? event.messages : [];
-    return messages.some((m: any) =>
-      m &&
-      typeof m === "object" &&
-      (m as any).role === "assistant" &&
-      (((m as any).stopReason === "aborted") || ((m as any).stopReason === "error"))
-    );
-  }
-
-  pi.on("agent_end", async (event, ctx) => {
-    try {
-      if (hookMode !== "agent_end") return;
-
-      if (agentWasAborted(event)) {
-        // Don't run diagnostics on aborted/error runs.
-        touchedFiles.clear();
-        return;
-      }
-
-      if (touchedFiles.size === 0) return;
-      if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
-
-      const abort = new AbortController();
-      diagnosticsAbort?.abort();
-      diagnosticsAbort = abort;
-
-      // Avoid showing a transient "working" state during agent-end diagnostics.
-      const files = Array.from(touchedFiles.entries());
-      touchedFiles.clear();
-
-      try {
-        const outputs: string[] = [];
-        for (const [filePath, includeWarnings] of files) {
-          if (shuttingDown || abort.signal.aborted) return;
-          if (!ctx.isIdle() || ctx.hasPendingMessages()) {
-            abort.abort();
-            return;
-          }
-
-          const output = await collectDiagnostics(filePath, ctx, includeWarnings, true, false);
-          if (abort.signal.aborted) return;
-          if (output) outputs.push(output);
-
-          if (analyzerEnabled && analyzerHookMode === "agent_end") {
-            const analyzerOutput = await collectAnalyzerDiagnostics(filePath, ctx);
-            if (abort.signal.aborted) return;
-            if (analyzerOutput) outputs.push(analyzerOutput);
-          }
-        }
-
-        if (shuttingDown || abort.signal.aborted) return;
-
-        if (outputs.length) {
-          pi.sendMessage({
-            customType: "lsp-diagnostics",
-            content: outputs.join("\n"),
-            display: true,
-          }, {
-            triggerTurn: true,
-            deliverAs: "followUp",
-          });
-        }
-      } finally {
-        if (diagnosticsAbort === abort) diagnosticsAbort = null;
-        if (!shuttingDown) setActivity("idle");
-      }
-    } finally {
-      if (!shuttingDown) scheduleIdleShutdown();
-    }
-  });
-
-  pi.on("tool_result", async (event, ctx) => {
-    const input = (event.input && typeof event.input === "object")
-      ? event.input as Record<string, unknown>
-      : {};
-    if (!isMutationTool(event.toolName, input)) return;
-    const filePaths = extractToolFilePaths(event.toolName, input);
-    if (filePaths.length === 0) return;
+  async function processMutationToolFiles(
+    toolName: string,
+    input: Record<string, unknown>,
+    ctx: ExtensionContext,
+  ): Promise<string[]> {
+    const filePaths = extractToolFilePaths(toolName, input);
+    if (filePaths.length === 0) return [];
 
     const manager = getOrCreateManager(ctx.cwd);
     const extras: string[] = [];
@@ -1101,10 +1031,10 @@ export default function (pi: ExtensionAPI) {
       const normalizedPath = normalizeFilePath(filePath, ctx.cwd);
       const existedBefore = pendingToolFileExists.get(normalizedPath) ?? true;
       pendingToolFileExists.delete(normalizedPath);
-      const includeWarnings = event.toolName === "write";
+      const includeWarnings = toolName === "write";
 
       let formatterMessage: string | undefined;
-      if (shouldRunFormatterForTool(event.toolName)) {
+      if (shouldRunFormatterForTool(toolName)) {
         const formatted = await runFormatterForFile(normalizedPath, ctx.cwd);
         if (formatted.formatterId) {
           formatterMessage = buildFormatterMessage(
@@ -1118,7 +1048,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       let analyzerMessage: string | undefined;
-      if (shouldRunAnalyzerForTool(event.toolName)) {
+      if (shouldRunAnalyzerForTool(toolName)) {
         const analyzed = await runAnalyzersForFile(normalizedPath, ctx.cwd);
         if (analyzed.analyzerIds && analyzed.analyzerIds.length > 0) {
           analyzerMessage = buildMultiAnalyzerMessage(
@@ -1208,10 +1138,117 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
+    return extras;
+  }
+
+  function agentWasAborted(event: any): boolean {
+    const messages = Array.isArray(event?.messages) ? event.messages : [];
+    return messages.some((m: any) =>
+      m &&
+      typeof m === "object" &&
+      (m as any).role === "assistant" &&
+      (((m as any).stopReason === "aborted") || ((m as any).stopReason === "error"))
+    );
+  }
+
+  pi.on("agent_end", async (event, ctx) => {
+    try {
+      if (hookMode !== "agent_end") return;
+
+      if (agentWasAborted(event)) {
+        // Don't run diagnostics on aborted/error runs.
+        touchedFiles.clear();
+        return;
+      }
+
+      if (touchedFiles.size === 0) return;
+      if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
+
+      const abort = new AbortController();
+      diagnosticsAbort?.abort();
+      diagnosticsAbort = abort;
+
+      // Avoid showing a transient "working" state during agent-end diagnostics.
+      const files = Array.from(touchedFiles.entries());
+      touchedFiles.clear();
+
+      try {
+        const outputs: string[] = [];
+        for (const [filePath, includeWarnings] of files) {
+          if (shuttingDown || abort.signal.aborted) return;
+          if (!ctx.isIdle() || ctx.hasPendingMessages()) {
+            abort.abort();
+            return;
+          }
+
+          const output = await collectDiagnostics(filePath, ctx, includeWarnings, true, false);
+          if (abort.signal.aborted) return;
+          if (output) outputs.push(output);
+
+          if (analyzerEnabled && analyzerHookMode === "agent_end") {
+            const analyzerOutput = await collectAnalyzerDiagnostics(filePath, ctx);
+            if (abort.signal.aborted) return;
+            if (analyzerOutput) outputs.push(analyzerOutput);
+          }
+        }
+
+        if (shuttingDown || abort.signal.aborted) return;
+
+        if (outputs.length) {
+          pi.sendMessage({
+            customType: "lsp-diagnostics",
+            content: outputs.join("\n"),
+            display: true,
+          }, {
+            triggerTurn: true,
+            deliverAs: "followUp",
+          });
+        }
+      } finally {
+        if (diagnosticsAbort === abort) diagnosticsAbort = null;
+        if (!shuttingDown) setActivity("idle");
+      }
+    } finally {
+      if (!shuttingDown) scheduleIdleShutdown();
+    }
+  });
+
+  pi.on("tool_result", async (event, ctx) => {
+    const input = (event.input && typeof event.input === "object")
+      ? event.input as Record<string, unknown>
+      : {};
+    if (!isMutationTool(event.toolName, input)) return;
+    mutationToolResultsSeen.add(event.toolCallId);
+    const extras = await processMutationToolFiles(event.toolName, input, ctx);
+
     if (extras.length === 0 || hookMode === "agent_end" || hookMode === "disabled") return;
 
     return {
       content: [...event.content, { type: "text" as const, text: extras.join("") }] as Array<{ type: "text"; text: string }>,
     };
+  });
+
+  (pi as any).on("tool_execution_end", async (event: { toolCallId: string; toolName: string; args?: unknown }, ctx: ExtensionContext) => {
+    const input = (event.args && typeof event.args === "object")
+      ? event.args as Record<string, unknown>
+      : {};
+    if (!isMutationTool(event.toolName, input)) return;
+
+    if (mutationToolResultsSeen.has(event.toolCallId)) {
+      mutationToolResultsSeen.delete(event.toolCallId);
+      return;
+    }
+
+    const extras = await processMutationToolFiles(event.toolName, input, ctx);
+    if (extras.length === 0 || hookMode === "agent_end" || hookMode === "disabled") return;
+
+    pi.sendMessage({
+      customType: "lsp-diagnostics",
+      content: extras.join(""),
+      display: true,
+    }, {
+      triggerTurn: false,
+      deliverAs: "followUp",
+    });
   });
 }
