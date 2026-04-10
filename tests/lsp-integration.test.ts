@@ -18,6 +18,7 @@ import { existsSync, statSync } from "fs";
 import { tmpdir } from "os";
 import { join, delimiter, resolve } from "path";
 import { LSPManager } from "../lsp-core.js";
+import type { Diagnostic } from "vscode-languageserver-protocol";
 
 // ============================================================================
 // Test utilities
@@ -43,6 +44,33 @@ class SkipTest extends Error {
 
 function skip(reason: string): never {
   throw new SkipTest(reason);
+}
+
+function hasErrorDiagnostics(diagnostics: Diagnostic[]): boolean {
+  return diagnostics.some((diagnostic) => diagnostic.severity === 1);
+}
+
+async function requireRealLspClient(manager: LSPManager, filePath: string, reason: string): Promise<void> {
+  const clients = await manager.getClientsForFile(filePath);
+  if (clients.length === 0) skip(reason);
+}
+
+async function waitForErrorDiagnostics(
+  manager: LSPManager,
+  filePath: string,
+  totalTimeoutMs: number,
+  attemptTimeoutMs = 10000,
+): Promise<{ diagnostics: Diagnostic[]; receivedResponse: boolean; unsupported?: boolean; error?: string }> {
+  const deadline = Date.now() + totalTimeoutMs;
+  let lastResult = await manager.touchFileAndWait(filePath, Math.min(attemptTimeoutMs, totalTimeoutMs));
+
+  while (!hasErrorDiagnostics(lastResult.diagnostics) && Date.now() < deadline) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    lastResult = await manager.touchFileAndWait(filePath, Math.min(attemptTimeoutMs, remainingMs));
+  }
+
+  return lastResult;
 }
 
 // Search paths matching lsp-core.ts
@@ -88,8 +116,10 @@ test("typescript: detects type errors", async () => {
     const file = join(dir, "index.ts");
     await writeFile(file, `const x: string = 123;`);
 
-    const { diagnostics } = await manager.touchFileAndWait(file, 10000);
+    await requireRealLspClient(manager, file, "typescript-language-server unavailable for temp semantic-diagnostics project");
+    const { diagnostics, receivedResponse } = await waitForErrorDiagnostics(manager, file, 20000, 5000);
 
+    assert(receivedResponse, "Expected TypeScript LSP to respond for semantic error project");
     assert(diagnostics.length > 0, `Expected errors, got ${diagnostics.length}`);
     assert(
       diagnostics.some(d => d.message.toLowerCase().includes("type") || d.severity === 1),
@@ -141,9 +171,11 @@ test("typescript: valid code has no errors", async () => {
     const file = join(dir, "index.ts");
     await writeFile(file, `const x: string = "hello";`);
 
-    const { diagnostics } = await manager.touchFileAndWait(file, 10000);
+    await requireRealLspClient(manager, file, "typescript-language-server unavailable for temp semantic-diagnostics project");
+    const { diagnostics, receivedResponse } = await manager.touchFileAndWait(file, 10000);
     const errors = diagnostics.filter(d => d.severity === 1);
 
+    assert(receivedResponse, "Expected TypeScript LSP to respond for valid semantic project");
     assert(errors.length === 0, `Expected no errors, got: ${errors.map(d => d.message).join(", ")}`);
   } finally {
     await manager.shutdown();
@@ -274,9 +306,11 @@ test("rust: detects type errors", async () => {
     const file = join(dir, "src/main.rs");
     await writeFile(file, `fn main() {\n    let x: i32 = "hello";\n}`);
 
-    // rust-analyzer needs a LOT of time to initialize (compiles the project)
-    const { diagnostics } = await manager.touchFileAndWait(file, 60000);
+    await requireRealLspClient(manager, file, "rust-analyzer unavailable for temp semantic-diagnostics crate");
+    // rust-analyzer can take a while to warm semantic diagnostics on a fresh crate.
+    const { diagnostics, receivedResponse } = await waitForErrorDiagnostics(manager, file, 90000, 15000);
 
+    assert(receivedResponse, "Expected rust-analyzer to respond for semantic error crate");
     assert(diagnostics.length > 0, `Expected errors, got ${diagnostics.length}`);
   } finally {
     await manager.shutdown();
@@ -299,9 +333,11 @@ test("rust: valid code has no errors", async () => {
     const file = join(dir, "src/main.rs");
     await writeFile(file, `fn main() {\n    let x = "hello";\n    println!("{}", x);\n}`);
 
-    const { diagnostics } = await manager.touchFileAndWait(file, 60000);
+    await requireRealLspClient(manager, file, "rust-analyzer unavailable for temp semantic-diagnostics crate");
+    const { diagnostics, receivedResponse } = await manager.touchFileAndWait(file, 60000);
     const errors = diagnostics.filter(d => d.severity === 1);
 
+    assert(receivedResponse, "Expected rust-analyzer to respond for valid crate");
     assert(errors.length === 0, `Expected no errors, got: ${errors.map(d => d.message).join(", ")}`);
   } finally {
     await manager.shutdown();
@@ -448,6 +484,14 @@ test("python: detects type errors", async () => {
 
   try {
     await writeFile(join(dir, "pyproject.toml"), `[project]\nname = "test"`);
+    await mkdir(join(dir, ".pi"));
+    await writeFile(join(dir, ".pi/settings.json"), JSON.stringify({
+      lsp: {
+        python: {
+          provider: "pyright",
+        },
+      },
+    }));
 
     const file = join(dir, "main.py");
     // Type error with type annotation
@@ -459,8 +503,10 @@ x: str = 123  # Type error
 result = greet(456)  # Type error
 `);
 
-    const { diagnostics } = await manager.touchFileAndWait(file, 10000);
+    await requireRealLspClient(manager, file, "pyright unavailable for temp semantic-diagnostics project");
+    const { diagnostics, receivedResponse } = await waitForErrorDiagnostics(manager, file, 20000, 5000);
 
+    assert(receivedResponse, "Expected Pyright to respond for semantic error project");
     assert(diagnostics.length > 0, `Expected errors, got ${diagnostics.length}`);
   } finally {
     await manager.shutdown();
@@ -478,6 +524,14 @@ test("python: valid code has no errors", async () => {
 
   try {
     await writeFile(join(dir, "pyproject.toml"), `[project]\nname = "test"`);
+    await mkdir(join(dir, ".pi"));
+    await writeFile(join(dir, ".pi/settings.json"), JSON.stringify({
+      lsp: {
+        python: {
+          provider: "pyright",
+        },
+      },
+    }));
 
     const file = join(dir, "main.py");
     await writeFile(file, `
@@ -488,9 +542,11 @@ x: str = "world"
 result = greet(x)
 `);
 
-    const { diagnostics } = await manager.touchFileAndWait(file, 10000);
+    await requireRealLspClient(manager, file, "pyright unavailable for temp semantic-diagnostics project");
+    const { diagnostics, receivedResponse } = await manager.touchFileAndWait(file, 10000);
     const errors = diagnostics.filter(d => d.severity === 1);
 
+    assert(receivedResponse, "Expected Pyright to respond for valid semantic project");
     assert(errors.length === 0, `Expected no errors, got: ${errors.map(d => d.message).join(", ")}`);
   } finally {
     await manager.shutdown();

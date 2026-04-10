@@ -234,6 +234,10 @@ Global and project settings are merged with these rules:
 
 ## Examples
 
+For grouped copy-pasteable language profiles, including `minimal`, `full
+strict`, and recommended install commands for each supported language
+ecosystem, see `docs/language-config-examples.md`.
+
 ### Select Ty for Python
 
 ```json

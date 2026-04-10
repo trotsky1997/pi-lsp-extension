@@ -315,6 +315,10 @@ Project settings override global settings.
 
 See `CONFIGURATION.md` for the full schema and supported IDs.
 
+For grouped per-language examples, including `minimal`, fuller strict
+profiles, and recommended install commands, see
+`docs/language-config-examples.md`.
+
 ### Example config
 
 ```json

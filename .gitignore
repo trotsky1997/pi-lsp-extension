@@ -3,3 +3,6 @@ package-lock.json
 .DS_Store
 *.log
 ai-slop-report.json
+.pi
+.md
+.tmp

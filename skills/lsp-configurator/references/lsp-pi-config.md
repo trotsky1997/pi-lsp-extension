@@ -117,6 +117,10 @@ Common keys:
 
 ## Good default mappings
 
+For grouped copy-pasteable language profiles, including `minimal`, `full
+strict`, and recommended install commands for each supported language
+ecosystem, see `docs/language-config-examples.md`.
+
 - TypeScript / JavaScript: `typescript`, formatter `biome` or `prettier`, analyzer `semgrep`
 - TypeScript / JavaScript AI-slop scans: optionally add analyzer `karpeslop`
 - Deno: `deno`
