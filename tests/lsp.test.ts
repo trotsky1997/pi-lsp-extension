@@ -316,6 +316,7 @@ test("ANALYZERS: includes common linter-style analyzers", async () => {
 		"shellcheck",
 		"hadolint",
 		"slopgrep",
+		"zippy",
 		"sloppylint",
 		"karpeslop",
 	];
@@ -1934,6 +1935,24 @@ test("analyzer matching: slopgrep matches tex files", async () => {
 	);
 });
 
+test("analyzer matching: zippy matches text files", async () => {
+	await withTempDir(
+		{
+			"docs/sample.txt": "This is plain prose.",
+		},
+		async (dir) => {
+			const matches = getAnalyzerConfigsForFile(
+				join(dir, "docs/sample.txt"),
+				dir,
+			);
+			assert(
+				matches.some((analyzer) => analyzer.id === "zippy"),
+				"zippy should match text files",
+			);
+		},
+	);
+});
+
 test("analyzer matching: shellcheck matches shell files", async () => {
 	await withTempDir(
 		{
@@ -2203,6 +2222,83 @@ exit 1
 			assert(
 				!result.error,
 				`Did not expect stderr JSON to be treated as an analyzer error: ${result.error ?? ""}`,
+			);
+		},
+	);
+});
+
+test("runAnalyzersForFile: zippy parses classification notes", async () => {
+	await withTempDir(
+		{
+			".pi": null,
+			"docs/sample.txt": "This is a prose sample.",
+		},
+		async (dir) => {
+			const fakeZippy = join(dir, "fake-zippy.sh");
+			await writeFile(
+				fakeZippy,
+				`#!/bin/sh
+file=""
+for arg in "$@"; do
+  file="$arg"
+done
+printf '%s\n' "$file"
+printf "('AI', 0.4205)\n"
+`,
+			);
+			await chmod(fakeZippy, 0o755);
+			await writeFile(
+				join(dir, ".pi/settings.json"),
+				JSON.stringify({
+					analyzer: {
+						analyzers: {
+							lychee: { disabled: true },
+							slopgrep: { disabled: true },
+							zippy: { command: fakeZippy },
+						},
+					},
+				}),
+			);
+
+			const result = await runAnalyzersForFile(
+				join(dir, "docs/sample.txt"),
+				dir,
+			);
+			assertIncludes(
+				result.analyzerIds ?? [],
+				"zippy",
+				"zippy should be reported as the analyzer that ran",
+			);
+			assertEquals(result.findings.length, 0, "Expected no zippy findings");
+			assertEquals(
+				result.notes?.length ?? 0,
+				1,
+				"Expected one zippy classification note",
+			);
+			assertEquals(
+				result.notes?.[0]?.source,
+				"zippy",
+				"Expected zippy note source",
+			);
+			assert(
+				result.notes?.[0]?.message.includes("AI-generated (zippy score") ?? false,
+				`Expected zippy note to include classification, got ${result.notes?.[0]?.message ?? "<missing>"}`,
+			);
+			assert(
+				result.notes?.[0]?.message.includes("zippy score 0.4205") ?? false,
+				`Expected zippy note to include raw score, got ${result.notes?.[0]?.message ?? "<missing>"}`,
+			);
+			assert(
+				result.notes?.[0]?.message.includes("raw 0.4205") ?? false,
+				`Expected zippy note to retain the raw score, got ${result.notes?.[0]?.message ?? "<missing>"}`,
+			);
+			assert(
+				result.notes?.[0]?.message.includes("not a probability") ?? false,
+				`Expected zippy note to clarify score semantics, got ${result.notes?.[0]?.message ?? "<missing>"}`,
+			);
+			assert(
+				!result.error,
+				`Did not expect parsed zippy output to be treated as an analyzer error: ${result.error ?? ""}`,
 			);
 		},
 	);

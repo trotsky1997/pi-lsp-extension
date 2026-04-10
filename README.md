@@ -156,6 +156,7 @@ Built-in analyzer IDs:
 - `slopgrep`
 - `sloppylint`
 - `shellcheck`
+- `zippy`
 
 Analyzers are for extra diagnostics, not LSP features and not file rewriting.
 Multiple analyzers can match and run for the same file.
@@ -173,6 +174,7 @@ npm i -g vscode-langservers-extracted   # eslint, html, css, json
 npm i -g yaml-language-server bash-language-server
 uv tool install semgrep
 uv tool install git+https://github.com/trotsky1997/slopgrep.git
+pip3 install thinkst-zippy
 cargo install lychee
 cargo install --locked --git https://github.com/Feel-ix-343/markdown-oxide.git markdown-oxide
 
@@ -233,9 +235,10 @@ Notes:
 - `semgrep` is an analyzer, not an LSP or formatter.
 - `lychee` checks broken links in Markdown, HTML, and other doc-like text files.
 - `slopgrep` is useful for prose-heavy repositories and AI-writing-tell scanning in Markdown, text, or LaTeX files.
+- `zippy` classifies prose-oriented text, Markdown, and LaTeX as AI or human and `lsp-pi` renders it as a readable score label plus the raw zippy score; it is still a heuristic delta, not a calibrated probability or true percentage.
 - `sloppylint` focuses on Python AI-code anti-patterns.
 - `karpeslop` focuses on TypeScript / JavaScript / React AI-slop detection.
-- Common analyzer-style tools bundled today are `semgrep`, `ruff check`, `golangci-lint run`, `markdownlint`, `lychee`, `shellcheck`, `hadolint`, `slopgrep`, `sloppylint`, and `karpeslop`.
+- Common analyzer-style tools bundled today are `semgrep`, `ruff check`, `golangci-lint run`, `markdownlint`, `lychee`, `shellcheck`, `hadolint`, `slopgrep`, `zippy`, `sloppylint`, and `karpeslop`.
 - Package names vary by OS and package manager; the important part is that the expected executable is on `PATH`.
 
 ## Commands

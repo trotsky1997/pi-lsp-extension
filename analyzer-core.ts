@@ -19,6 +19,7 @@ interface AnalyzerConfig {
   rootMarkers?: string[];
   resolveCommand: (filePath: string, cwd: string, settings: AnalyzerSettings) => AnalyzerCommand | undefined;
   parseOutput: (stdout: string, filePath: string, command: AnalyzerCommand) => AnalyzerFinding[];
+  parseNotes?: (stdout: string, filePath: string, command: AnalyzerCommand) => AnalyzerNote[];
 }
 
 export interface AnalyzerFinding {
@@ -31,10 +32,16 @@ export interface AnalyzerFinding {
   column: number;
 }
 
+export interface AnalyzerNote {
+  source: string;
+  message: string;
+}
+
 export interface AnalyzerRunResult {
   analyzerId?: string;
   analyzerIds?: string[];
   findings: AnalyzerFinding[];
+  notes?: AnalyzerNote[];
   skipped?: string;
   error?: string;
   errors?: string[];
@@ -118,7 +125,11 @@ function directBinaryAnalyzer(
   binaryName: string,
   defaultArgs: (file: string, root: string) => { args: string[]; outputFile?: string },
   parseOutput: (stdout: string, filePath: string, command: AnalyzerCommand) => AnalyzerFinding[],
-  options: { rootMarkers?: string[]; fileNames?: string[] } = {},
+  options: {
+    rootMarkers?: string[];
+    fileNames?: string[];
+    parseNotes?: (stdout: string, filePath: string, command: AnalyzerCommand) => AnalyzerNote[];
+  } = {},
 ): AnalyzerConfig {
   return {
     id,
@@ -134,6 +145,7 @@ function directBinaryAnalyzer(
       options.rootMarkers,
     ),
     parseOutput,
+    parseNotes: options.parseNotes,
   };
 }
 
@@ -528,6 +540,25 @@ function parseLycheeOutput(stdout: string, fallbackFilePath: string, command: An
   }
 }
 
+function parseZippyNotes(stdout: string, _fallbackFilePath: string, command: AnalyzerCommand): AnalyzerNote[] {
+  const output = readOutputFileIfPresent(command, stdout);
+  const match = output.match(/\(\s*["']?(AI|Human)["']?\s*,\s*([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*\)/i);
+  if (!match) return [];
+
+  const classification = match[1]?.toUpperCase() === "AI" ? "AI" : "Human";
+  const score = match[2];
+  if (!score) return [];
+
+  const numericScore = Number(score);
+  const displayScore = Number.isFinite(numericScore) ? numericScore.toFixed(4) : score;
+  const label = classification === "AI" ? "AI-generated" : "Human handwritten";
+
+  return [{
+    source: "zippy",
+    message: `${label} (zippy score ${displayScore}; raw ${score}, not a probability)`,
+  }];
+}
+
 const DEFAULT_SEMGREP_EXTENSIONS = [
   ".js", ".jsx", ".ts", ".tsx", ".py", ".go", ".java", ".rb", ".php", ".yaml", ".yml",
   ".tf", ".c", ".cc", ".cpp", ".cs", ".kt", ".swift", ".scala", ".sh", ".md",
@@ -594,6 +625,14 @@ export const ANALYZERS: AnalyzerConfig[] = [
     "slopgrep",
     (file) => ({ args: ["scan", "--json", file] }),
     parseSlopgrepOutput,
+  ),
+  directBinaryAnalyzer(
+    "zippy",
+    [".txt", ".md", ".mdx", ".markdown", ".tex"],
+    "zippy",
+    (file) => ({ args: [file] }),
+    () => [],
+    { parseNotes: parseZippyNotes },
   ),
   directBinaryAnalyzer(
     "sloppylint",
@@ -667,6 +706,7 @@ export async function runAnalyzersForFile(filePath: string, cwd: string): Promis
 
   const analyzerIds: string[] = [];
   const findings: AnalyzerFinding[] = [];
+  const notes: AnalyzerNote[] = [];
   const errors: string[] = [];
 
   for (const analyzer of candidates) {
@@ -680,9 +720,11 @@ export async function runAnalyzersForFile(filePath: string, cwd: string): Promis
       const parseSource = result.stdout.trim() ? result.stdout : result.stderr;
       const parsedFromStderr = !result.stdout.trim() && result.stderr.trim().length > 0;
       const parsedFindings = analyzer.parseOutput(parseSource, absPath, command).filter((finding) => finding.filePath === "" || path.resolve(finding.filePath) === absPath);
+      const parsedNotes = analyzer.parseNotes?.(parseSource, absPath, command) ?? [];
       findings.push(...parsedFindings);
+      notes.push(...parsedNotes);
 
-      if (result.code !== 0 && parsedFindings.length === 0) {
+      if (result.code !== 0 && parsedFindings.length === 0 && parsedNotes.length === 0) {
         errors.push(`${analyzer.id}: ${result.stderr.trim() || (result.signal ? `analyzer exited via signal ${result.signal}` : `analyzer exited with code ${result.code}`)}`);
         continue;
       }
@@ -698,6 +740,7 @@ export async function runAnalyzersForFile(filePath: string, cwd: string): Promis
     analyzerId: analyzerIds[0],
     analyzerIds,
     findings,
+    notes: notes.length > 0 ? notes : undefined,
     error: errors[0],
     errors: errors.length > 0 ? errors : undefined,
   };

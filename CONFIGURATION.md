@@ -221,6 +221,7 @@ Each entry under `analyzer.tools.<analyzerId>` or `analyzer.analyzers.<analyzerI
 - `sloppylint`
 - `slopgrep`
 - `shellcheck`
+- `zippy`
 
 ## Merge rules
 
@@ -336,6 +337,7 @@ Global and project settings are merged with these rules:
 - `shellcheck` for shell scripts
 - `hadolint` for `Dockerfile`
 - `slopgrep` for Markdown, prose-heavy text files, and LaTeX prose
+- `zippy` for AI/human classification of prose-oriented text, Markdown, and LaTeX files; install with `pip3 install thinkst-zippy`. `lsp-pi` renders the result as a readable score label plus the raw zippy score, but it is still a heuristic delta rather than a calibrated probability or true percentage
 - `sloppylint` for Python AI-generated-code anti-patterns
 - `karpeslop` for TypeScript / JavaScript / React AI-slop detection
 

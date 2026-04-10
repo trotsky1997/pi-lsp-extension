@@ -113,6 +113,7 @@ Common keys:
 - `hadolint`
 - `slopgrep`
 - `sloppylint`
+- `zippy`
 
 ## Good default mappings
 
@@ -126,7 +127,8 @@ Common keys:
 - Markdown: `markdown` via `markdown-oxide`, formatter `rumdl`, analyzer `markdownlint`
 - Markdown broken-link checks: optionally add analyzer `lychee`
 - Markdown / prose-heavy docs: optionally add analyzer `slopgrep`
-- LaTeX: `texlab`, and optionally analyzer `slopgrep`
+- Markdown / text / LaTeX AI-text classification: optionally add analyzer `zippy`
+- LaTeX: `texlab`, and optionally analyzer `slopgrep` or `zippy`
 - Shell: formatter `shfmt`, analyzer `shellcheck`
 - Dockerfile: analyzer `hadolint`
 - Terraform: `terraform`, formatter `terraform`

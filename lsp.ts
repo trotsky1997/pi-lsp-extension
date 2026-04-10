@@ -726,6 +726,7 @@ export default function (pi: ExtensionAPI) {
     analyzerIds: string[],
     findingCount: number,
     findings: Array<{ source?: string; message: string; line: number; column: number; ruleId?: string }>,
+    notes: Array<{ source?: string; message: string }>,
     errors?: string[],
   ): string {
     const relativePath = path.relative(cwd, filePath);
@@ -735,13 +736,18 @@ export default function (pi: ExtensionAPI) {
       return `- ${source}${finding.line}:${finding.column}${rule} ${finding.message}`;
     }).join("\n");
     const remainder = findingCount > 8 ? `\n... +${findingCount - 8} more` : "";
+    const noteBlock = notes.length > 0
+      ? `\nNotes:\n${notes.map((note) => `- ${note.source ? `[${note.source}] ` : ""}${note.message}`).join("\n")}`
+      : "";
     const errorBlock = errors && errors.length > 0 ? `\nErrors:\n${errors.map((error) => `- ${error}`).join("\n")}` : "";
 
     if (findingCount === 0) {
-      return `\nAnalyzers ${analyzerIds.join(", ")} checked ${relativePath}; no issues.${errorBlock}\n`;
+      return notes.length > 0
+        ? `\nAnalyzers ${analyzerIds.join(", ")} checked ${relativePath}.${noteBlock}${errorBlock}\n`
+        : `\nAnalyzers ${analyzerIds.join(", ")} checked ${relativePath}; no issues.${errorBlock}\n`;
     }
 
-    return `\nAnalyzers ${analyzerIds.join(", ")} found ${findingCount} issue(s) in ${relativePath}:\n${preview}${remainder}${errorBlock}\n`;
+    return `\nAnalyzers ${analyzerIds.join(", ")} found ${findingCount} issue(s) in ${relativePath}:\n${preview}${remainder}${noteBlock}${errorBlock}\n`;
   }
 
   async function buildDoctorReport(ctx: ExtensionContext): Promise<string> {
@@ -855,6 +861,10 @@ export default function (pi: ExtensionAPI) {
         } else {
           lines.push(`- Analyzer status: ran ${analysis.analyzerIds?.join(", ") ?? analysis.analyzerId ?? "unknown"}`);
           lines.push(`- Analyzer findings: ${analysis.findings.length}`);
+          if (analysis.notes && analysis.notes.length > 0) {
+            lines.push(`- Analyzer notes:`);
+            for (const note of analysis.notes) lines.push(`  - ${note.source}: ${note.message}`);
+          }
           if (analysis.errors && analysis.errors.length > 0) {
             lines.push(`- Analyzer errors:`);
             for (const error of analysis.errors) lines.push(`  - ${error}`);
@@ -912,7 +922,15 @@ export default function (pi: ExtensionAPI) {
   ): Promise<string | undefined> {
     const result = await runAnalyzersForFile(filePath, ctx.cwd);
     if (!result.analyzerIds || result.analyzerIds.length === 0) return undefined;
-    return buildMultiAnalyzerMessage(ctx.cwd, filePath, result.analyzerIds, result.findings.length, result.findings, result.errors);
+    return buildMultiAnalyzerMessage(
+      ctx.cwd,
+      filePath,
+      result.analyzerIds,
+      result.findings.length,
+      result.findings,
+      result.notes ?? [],
+      result.errors,
+    );
   }
 
   pi.registerCommand("lsp", {
@@ -1090,6 +1108,7 @@ export default function (pi: ExtensionAPI) {
             analyzed.analyzerIds,
             analyzed.findings.length,
             analyzed.findings,
+            analyzed.notes ?? [],
             analyzed.errors,
           );
         }
