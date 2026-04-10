@@ -146,6 +146,8 @@ const BUNDLED_LANGUAGE_SPECS: LanguageSpec[] = [
 		id: "go",
 		extensions: [".go"],
 		wasmFile: "tree-sitter-go.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "go", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "go", "locals.scm"),
 	},
 	{
 		id: "ini",
@@ -156,6 +158,8 @@ const BUNDLED_LANGUAGE_SPECS: LanguageSpec[] = [
 		id: "java",
 		extensions: [".java"],
 		wasmFile: "tree-sitter-java.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "java", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "java", "locals.scm"),
 	},
 	{
 		id: "javascript",
@@ -168,6 +172,8 @@ const BUNDLED_LANGUAGE_SPECS: LanguageSpec[] = [
 		id: "php",
 		extensions: [".php"],
 		wasmFile: "tree-sitter-php.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "php", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "php", "locals.scm"),
 	},
 	{
 		id: "powershell",
@@ -189,11 +195,15 @@ const BUNDLED_LANGUAGE_SPECS: LanguageSpec[] = [
 		id: "ruby",
 		extensions: [".rb"],
 		wasmFile: "tree-sitter-ruby.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "ruby", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "ruby", "locals.scm"),
 	},
 	{
 		id: "rust",
 		extensions: [".rs"],
 		wasmFile: "tree-sitter-rust.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "rust", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "rust", "locals.scm"),
 	},
 	{
 		id: "tsx",

@@ -2744,6 +2744,264 @@ test("TreeSitterManager: extracts symbols from newly bundled grammars", async ()
 	);
 });
 
+test("TreeSitterManager: language-specific queries improve Go navigation", async () => {
+	await withTempDir(
+		{
+			"main.go": `package main
+
+const Answer = 42
+
+type Person struct {
+	Name string
+}
+
+func greet(name string) string {
+	local := name
+	return local
+}
+
+func main() {
+	result := greet("a")
+	_ = result
+	_ = Answer
+}
+`,
+		},
+		async (dir) => {
+			const file = join(dir, "main.go");
+			const manager = new TreeSitterManager();
+			const symbols = manager.getDocumentSymbols(file).map((symbol) => symbol.name);
+			assert(
+				symbols.includes("Answer") && symbols.includes("Person") && symbols.includes("greet"),
+				`Expected Go symbols for const/type/function, got: ${symbols.join(", ")}`,
+			);
+
+			const functionDefinition = manager.getDefinition(file, 15, 13);
+			assertEquals(
+				functionDefinition[0]?.range.start.line,
+				8,
+				"Go call should resolve to the greet declaration",
+			);
+
+			const localDefinition = manager.getDefinition(file, 11, 10);
+			assertEquals(
+				localDefinition[0]?.range.start.line,
+				9,
+				"Go local identifier should resolve to the short variable declaration",
+			);
+
+			const functionReferences = manager.getReferences(file, 9, 6);
+			assert(
+				functionReferences.length >= 2,
+				`Expected Go function references for declaration plus call, got ${functionReferences.length}`,
+			);
+		},
+	);
+});
+
+test("TreeSitterManager: language-specific queries improve Rust navigation", async () => {
+	await withTempDir(
+		{
+			"main.rs": `const ANSWER: i32 = 42;
+
+struct Person {
+	name: String,
+}
+
+fn greet(name: &str) -> &str {
+	let local = name;
+	local
+}
+
+fn main() {
+	let result = greet("a");
+	let _ = ANSWER;
+}
+`,
+		},
+		async (dir) => {
+			const file = join(dir, "main.rs");
+			const manager = new TreeSitterManager();
+			const symbols = manager.getDocumentSymbols(file).map((symbol) => symbol.name);
+			assert(
+				symbols.includes("ANSWER") && symbols.includes("Person") && symbols.includes("greet"),
+				`Expected Rust symbols for const/struct/function, got: ${symbols.join(", ")}`,
+			);
+
+			const functionDefinition = manager.getDefinition(file, 13, 15);
+			assertEquals(
+				functionDefinition[0]?.range.start.line,
+				6,
+				"Rust call should resolve to the greet declaration",
+			);
+
+			const localDefinition = manager.getDefinition(file, 9, 3);
+			assertEquals(
+				localDefinition[0]?.range.start.line,
+				7,
+				"Rust local identifier should resolve to the let declaration",
+			);
+
+			const constReferences = manager.getReferences(file, 1, 7);
+			assert(
+				constReferences.length >= 2,
+				`Expected Rust const references for declaration plus usage, got ${constReferences.length}`,
+			);
+		},
+	);
+});
+
+test("TreeSitterManager: language-specific queries improve Java navigation", async () => {
+	await withTempDir(
+		{
+			"Main.java": `class Greeter {
+	static final int ANSWER = 42;
+
+	String greet(String name) {
+		String local = name;
+		return local;
+	}
+
+	void run() {
+		String result = greet("a");
+		int answer = ANSWER;
+	}
+}
+`,
+		},
+		async (dir) => {
+			const file = join(dir, "Main.java");
+			const manager = new TreeSitterManager();
+			const symbols = manager.getDocumentSymbols(file).map((symbol) => symbol.name);
+			assert(
+				symbols.includes("Greeter") && symbols.includes("ANSWER") && symbols.includes("greet"),
+				`Expected Java symbols for class/field/method, got: ${symbols.join(", ")}`,
+			);
+
+			const methodDefinition = manager.getDefinition(file, 10, 19);
+			assertEquals(
+				methodDefinition[0]?.range.start.line,
+				3,
+				"Java method call should resolve to the greet declaration",
+			);
+
+			const localDefinition = manager.getDefinition(file, 6, 11);
+			assertEquals(
+				localDefinition[0]?.range.start.line,
+				4,
+				"Java local identifier should resolve to the local declaration",
+			);
+
+			const fieldReferences = manager.getReferences(file, 2, 19);
+			assert(
+				fieldReferences.length >= 2,
+				`Expected Java field references for declaration plus usage, got ${fieldReferences.length}`,
+			);
+		},
+	);
+});
+
+test("TreeSitterManager: language-specific queries improve Ruby navigation", async () => {
+	await withTempDir(
+		{
+			"app.rb": `module Tools
+	class Greeter
+		ANSWER = 42
+
+		def greet(name)
+			local = name
+			local
+		end
+	end
+end
+
+Greeter.new.greet("a")
+`,
+		},
+		async (dir) => {
+			const file = join(dir, "app.rb");
+			const manager = new TreeSitterManager();
+			const symbols = manager.getDocumentSymbols(file).map((symbol) => symbol.name);
+			assert(
+				symbols.includes("Tools") && symbols.includes("Greeter") && symbols.includes("ANSWER") && symbols.includes("greet"),
+				`Expected Ruby symbols for module/class/constant/method, got: ${symbols.join(", ")}`,
+			);
+
+			const methodDefinition = manager.getDefinition(file, 12, 17);
+			assertEquals(
+				methodDefinition[0]?.range.start.line,
+				4,
+				"Ruby method call should resolve to the greet declaration",
+			);
+
+			const localDefinition = manager.getDefinition(file, 7, 5);
+			assertEquals(
+				localDefinition[0]?.range.start.line,
+				5,
+				"Ruby local identifier should resolve to the assignment",
+			);
+
+			const methodReferences = manager.getReferences(file, 5, 8);
+			assert(
+				methodReferences.length >= 2,
+				`Expected Ruby method references for declaration plus call, got ${methodReferences.length}`,
+			);
+		},
+	);
+});
+
+test("TreeSitterManager: language-specific queries improve PHP navigation", async () => {
+	await withTempDir(
+		{
+			"index.php": `<?php
+class Greeter {
+	const ANSWER = 42;
+
+	function greet($name) {
+		$local = $name;
+		return $local;
+	}
+}
+
+function helper($value) {
+	return $value;
+}
+
+helper("a");
+`,
+		},
+		async (dir) => {
+			const file = join(dir, "index.php");
+			const manager = new TreeSitterManager();
+			const symbols = manager.getDocumentSymbols(file).map((symbol) => symbol.name);
+			assert(
+				symbols.includes("Greeter") && symbols.includes("ANSWER") && symbols.includes("greet") && symbols.includes("helper"),
+				`Expected PHP symbols for class/constant/functions, got: ${symbols.join(", ")}`,
+			);
+
+			const functionDefinition = manager.getDefinition(file, 15, 3);
+			assertEquals(
+				functionDefinition[0]?.range.start.line,
+				10,
+				"PHP function call should resolve to the helper declaration",
+			);
+
+			const localDefinition = manager.getDefinition(file, 7, 11);
+			assertEquals(
+				localDefinition[0]?.range.start.line,
+				5,
+				"PHP local variable should resolve to the assignment",
+			);
+
+			const functionReferences = manager.getReferences(file, 11, 10);
+			assert(
+				functionReferences.length >= 2,
+				`Expected PHP helper references for declaration plus call, got ${functionReferences.length}`,
+			);
+		},
+	);
+});
+
 test("LSPManager: falls back to Tree-sitter diagnostics without LSP root", async () => {
 	await withTempDir(
 		{
