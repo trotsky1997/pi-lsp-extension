@@ -38,6 +38,9 @@
     "extensions": [
       "./lsp.ts",
       "./lsp-tool.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "dependencies": {
