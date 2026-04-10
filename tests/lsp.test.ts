@@ -2681,6 +2681,69 @@ test("TreeSitterManager: reports syntax diagnostics without project config", asy
 	);
 });
 
+test("TreeSitterManager: supports bundled vscode tree-sitter wasm grammars", async () => {
+	const manager = new TreeSitterManager();
+	const fileNames = [
+		"script.sh",
+		"Program.cs",
+		"main.cpp",
+		"style.css",
+		"main.go",
+		"config.ini",
+		"Main.java",
+		"index.js",
+		"index.php",
+		"profile.ps1",
+		"app.py",
+		"pattern.regex",
+		"app.rb",
+		"main.rs",
+		"component.tsx",
+		"main.ts",
+	];
+
+	for (const fileName of fileNames) {
+		assert(
+			manager.supportsOperation(fileName, "diagnostics"),
+			`Expected Tree-sitter diagnostics fallback support for ${fileName}`,
+		);
+	}
+});
+
+test("TreeSitterManager: extracts symbols from newly bundled grammars", async () => {
+	await withTempDir(
+		{
+			"script.sh": "greet() { echo hi; }\n",
+			"Program.cs": "class Greeter { string Greet(string name) { return name; } }\n",
+			"main.go": "package main\nfunc greet(name string) string { return name }\n",
+			"Main.java": "class Greeter { String greet(String name) { return name; } }\n",
+			"index.php": "<?php function greet($name) { return $name; }\n",
+			"app.rb": "class Greeter\n  def greet(name)\n    name\n  end\nend\n",
+			"main.rs": "fn greet(name: &str) -> &str { name }\n",
+		},
+		async (dir) => {
+			const manager = new TreeSitterManager();
+			const expectations: Array<[string, string]> = [
+				["script.sh", "greet"],
+				["Program.cs", "Greeter"],
+				["main.go", "greet"],
+				["Main.java", "Greeter"],
+				["index.php", "greet"],
+				["app.rb", "Greeter"],
+				["main.rs", "greet"],
+			];
+
+			for (const [fileName, expectedSymbol] of expectations) {
+				const symbols = manager.getDocumentSymbols(join(dir, fileName));
+				assert(
+					symbols.some((symbol) => symbol.name === expectedSymbol),
+					`Expected ${expectedSymbol} symbol in ${fileName}, got: ${symbols.map((symbol) => symbol.name).join(", ")}`,
+				);
+			}
+		},
+	);
+});
+
 test("LSPManager: falls back to Tree-sitter diagnostics without LSP root", async () => {
 	await withTempDir(
 		{

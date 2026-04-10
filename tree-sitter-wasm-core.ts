@@ -34,10 +34,22 @@ type WasmQuery = InstanceType<typeof TreeSitter.Query>;
 type WasmPoint = { row: number; column: number };
 
 type SupportedLanguageId =
+	| "bash"
+	| "csharp"
+	| "cpp"
+	| "css"
+	| "go"
+	| "ini"
+	| "java"
 	| "javascript"
+	| "php"
+	| "powershell"
 	| "typescript"
 	| "tsx"
 	| "python"
+	| "regex"
+	| "ruby"
+	| "rust"
 	| "markdown";
 
 type TagRole = "definition" | "reference";
@@ -48,6 +60,14 @@ interface LanguageConfig {
 	id: SupportedLanguageId;
 	extensions: string[];
 	language: WasmLanguage;
+	tagsQueryPath?: string;
+	localsQueryPath?: string;
+}
+
+interface LanguageSpec {
+	id: SupportedLanguageId;
+	extensions: string[];
+	wasmFile: string;
 	tagsQueryPath?: string;
 	localsQueryPath?: string;
 }
@@ -91,17 +111,112 @@ await Parser.init({
 	locateFile: (file) => path.join(TREE_SITTER_WASM_DIR, file),
 });
 
-const [javascriptLanguage, typescriptLanguage, tsxLanguage, pythonLanguage] =
-	await Promise.all([
-		Language.load(
-			path.join(TREE_SITTER_WASM_DIR, "tree-sitter-javascript.wasm"),
-		),
-		Language.load(
-			path.join(TREE_SITTER_WASM_DIR, "tree-sitter-typescript.wasm"),
-		),
-		Language.load(path.join(TREE_SITTER_WASM_DIR, "tree-sitter-tsx.wasm")),
-		Language.load(path.join(TREE_SITTER_WASM_DIR, "tree-sitter-python.wasm")),
-	]);
+const BUNDLED_LANGUAGE_SPECS: LanguageSpec[] = [
+	{
+		id: "bash",
+		extensions: [".sh", ".bash", ".zsh"],
+		wasmFile: "tree-sitter-bash.wasm",
+	},
+	{
+		id: "csharp",
+		extensions: [".cs"],
+		wasmFile: "tree-sitter-c-sharp.wasm",
+	},
+	{
+		id: "cpp",
+		extensions: [
+			".c",
+			".h",
+			".cc",
+			".cpp",
+			".cxx",
+			".hpp",
+			".hh",
+			".m",
+			".mm",
+		],
+		wasmFile: "tree-sitter-cpp.wasm",
+	},
+	{
+		id: "css",
+		extensions: [".css"],
+		wasmFile: "tree-sitter-css.wasm",
+	},
+	{
+		id: "go",
+		extensions: [".go"],
+		wasmFile: "tree-sitter-go.wasm",
+	},
+	{
+		id: "ini",
+		extensions: [".ini"],
+		wasmFile: "tree-sitter-ini.wasm",
+	},
+	{
+		id: "java",
+		extensions: [".java"],
+		wasmFile: "tree-sitter-java.wasm",
+	},
+	{
+		id: "javascript",
+		extensions: [".js", ".jsx", ".mjs", ".cjs"],
+		wasmFile: "tree-sitter-javascript.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "javascript", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "javascript", "locals.scm"),
+	},
+	{
+		id: "php",
+		extensions: [".php"],
+		wasmFile: "tree-sitter-php.wasm",
+	},
+	{
+		id: "powershell",
+		extensions: [".ps1", ".psm1", ".psd1"],
+		wasmFile: "tree-sitter-powershell.wasm",
+	},
+	{
+		id: "python",
+		extensions: [".py", ".pyi"],
+		wasmFile: "tree-sitter-python.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "python", "tags.scm"),
+	},
+	{
+		id: "regex",
+		extensions: [".regex", ".re"],
+		wasmFile: "tree-sitter-regex.wasm",
+	},
+	{
+		id: "ruby",
+		extensions: [".rb"],
+		wasmFile: "tree-sitter-ruby.wasm",
+	},
+	{
+		id: "rust",
+		extensions: [".rs"],
+		wasmFile: "tree-sitter-rust.wasm",
+	},
+	{
+		id: "tsx",
+		extensions: [".tsx"],
+		wasmFile: "tree-sitter-tsx.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "typescript", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "typescript", "locals.scm"),
+	},
+	{
+		id: "typescript",
+		extensions: [".ts", ".mts", ".cts"],
+		wasmFile: "tree-sitter-typescript.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "typescript", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "typescript", "locals.scm"),
+	},
+];
+
+const bundledLanguages = await Promise.all(
+	BUNDLED_LANGUAGE_SPECS.map(async (spec) => ({
+		...spec,
+		language: await Language.load(path.join(TREE_SITTER_WASM_DIR, spec.wasmFile)),
+	})),
+);
 
 const markdownLanguage = fs.existsSync(MARKDOWN_WASM_PATH)
 	? await Language.load(MARKDOWN_WASM_PATH)
@@ -114,35 +229,13 @@ const markdownParser = (() => {
 	return parser;
 })();
 
-const LANGUAGE_CONFIGS: LanguageConfig[] = [
-	{
-		id: "javascript",
-		extensions: [".js", ".jsx", ".mjs", ".cjs"],
-		language: javascriptLanguage,
-		tagsQueryPath: path.join(QUERY_ROOT, "javascript", "tags.scm"),
-		localsQueryPath: path.join(QUERY_ROOT, "javascript", "locals.scm"),
-	},
-	{
-		id: "typescript",
-		extensions: [".ts", ".mts", ".cts"],
-		language: typescriptLanguage,
-		tagsQueryPath: path.join(QUERY_ROOT, "typescript", "tags.scm"),
-		localsQueryPath: path.join(QUERY_ROOT, "typescript", "locals.scm"),
-	},
-	{
-		id: "tsx",
-		extensions: [".tsx"],
-		language: tsxLanguage,
-		tagsQueryPath: path.join(QUERY_ROOT, "typescript", "tags.scm"),
-		localsQueryPath: path.join(QUERY_ROOT, "typescript", "locals.scm"),
-	},
-	{
-		id: "python",
-		extensions: [".py", ".pyi"],
-		language: pythonLanguage,
-		tagsQueryPath: path.join(QUERY_ROOT, "python", "tags.scm"),
-	},
-];
+const LANGUAGE_CONFIGS: LanguageConfig[] = bundledLanguages.map((spec) => ({
+	id: spec.id,
+	extensions: spec.extensions,
+	language: spec.language,
+	tagsQueryPath: spec.tagsQueryPath,
+	localsQueryPath: spec.localsQueryPath,
+}));
 
 if (markdownLanguage) {
 	LANGUAGE_CONFIGS.push({
