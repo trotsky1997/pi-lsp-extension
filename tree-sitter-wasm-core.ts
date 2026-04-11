@@ -116,11 +116,15 @@ const BUNDLED_LANGUAGE_SPECS: LanguageSpec[] = [
 		id: "bash",
 		extensions: [".sh", ".bash", ".zsh"],
 		wasmFile: "tree-sitter-bash.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "bash", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "bash", "locals.scm"),
 	},
 	{
 		id: "csharp",
 		extensions: [".cs"],
 		wasmFile: "tree-sitter-c-sharp.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "csharp", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "csharp", "locals.scm"),
 	},
 	{
 		id: "cpp",
@@ -136,11 +140,14 @@ const BUNDLED_LANGUAGE_SPECS: LanguageSpec[] = [
 			".mm",
 		],
 		wasmFile: "tree-sitter-cpp.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "cpp", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "cpp", "locals.scm"),
 	},
 	{
 		id: "css",
 		extensions: [".css"],
 		wasmFile: "tree-sitter-css.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "css", "tags.scm"),
 	},
 	{
 		id: "go",
@@ -153,6 +160,7 @@ const BUNDLED_LANGUAGE_SPECS: LanguageSpec[] = [
 		id: "ini",
 		extensions: [".ini"],
 		wasmFile: "tree-sitter-ini.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "ini", "tags.scm"),
 	},
 	{
 		id: "java",
@@ -179,17 +187,20 @@ const BUNDLED_LANGUAGE_SPECS: LanguageSpec[] = [
 		id: "powershell",
 		extensions: [".ps1", ".psm1", ".psd1"],
 		wasmFile: "tree-sitter-powershell.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "powershell", "tags.scm"),
 	},
 	{
 		id: "python",
 		extensions: [".py", ".pyi"],
 		wasmFile: "tree-sitter-python.wasm",
 		tagsQueryPath: path.join(QUERY_ROOT, "python", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "python", "locals.scm"),
 	},
 	{
 		id: "regex",
 		extensions: [".regex", ".re"],
 		wasmFile: "tree-sitter-regex.wasm",
+		tagsQueryPath: path.join(QUERY_ROOT, "regex", "tags.scm"),
 	},
 	{
 		id: "ruby",

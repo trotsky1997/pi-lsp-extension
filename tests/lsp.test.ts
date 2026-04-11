@@ -3002,6 +3002,216 @@ helper("a");
 	);
 });
 
+test("TreeSitterManager: language-specific queries improve Bash navigation", async () => {
+	await withTempDir(
+		{
+			"script.sh": `answer=42
+greet() {
+  echo hi
+}
+greet
+`,
+		},
+		async (dir) => {
+			const file = join(dir, "script.sh");
+			const manager = new TreeSitterManager();
+			const symbols = manager.getDocumentSymbols(file).map((symbol) => symbol.name);
+			assert(
+				symbols.includes("answer") && symbols.includes("greet"),
+				`Expected Bash symbols for assignment and function, got: ${symbols.join(", ")}`,
+			);
+
+			const definition = manager.getDefinition(file, 5, 2);
+			assertEquals(
+				definition[0]?.range.start.line,
+				1,
+				"Bash command should resolve to the function declaration",
+			);
+
+			const references = manager.getReferences(file, 2, 2);
+			assert(
+				references.length >= 2,
+				`Expected Bash references for declaration plus command call, got ${references.length}`,
+			);
+		},
+	);
+});
+
+test("TreeSitterManager: language-specific queries improve C# navigation", async () => {
+	await withTempDir(
+		{
+			"Program.cs": `class Greeter {
+  const int Answer = 42;
+
+  string Greet(string name) {
+    var local = name;
+    return local;
+  }
+
+  void Run() {
+    var result = Greet("a");
+  }
+}
+`,
+		},
+		async (dir) => {
+			const file = join(dir, "Program.cs");
+			const manager = new TreeSitterManager();
+			const symbols = manager.getDocumentSymbols(file).map((symbol) => symbol.name);
+			assert(
+				symbols.includes("Greeter") && symbols.includes("Answer") && symbols.includes("Greet"),
+				`Expected C# symbols for class/field/method, got: ${symbols.join(", ")}`,
+			);
+
+			const definition = manager.getDefinition(file, 10, 18);
+			assertEquals(
+				definition[0]?.range.start.line,
+				3,
+				"C# invocation should resolve to the method declaration",
+			);
+
+			const localDefinition = manager.getDefinition(file, 6, 12);
+			assertEquals(
+				localDefinition[0]?.range.start.line,
+				4,
+				"C# local identifier should resolve to the local declaration",
+			);
+		},
+	);
+});
+
+test("TreeSitterManager: language-specific queries improve C++ navigation", async () => {
+	await withTempDir(
+		{
+			"main.cpp": `class Greeter {
+public:
+  static const int Answer = 42;
+};
+
+int greet(int name) {
+  auto local = name;
+  return local;
+}
+
+int main() {
+  int result = greet(1);
+  return result;
+}
+`,
+		},
+		async (dir) => {
+			const file = join(dir, "main.cpp");
+			const manager = new TreeSitterManager();
+			const symbols = manager.getDocumentSymbols(file).map((symbol) => symbol.name);
+			assert(
+				symbols.includes("Greeter") && symbols.includes("greet") && symbols.includes("main"),
+				`Expected C++ symbols for class and functions, got: ${symbols.join(", ")}`,
+			);
+
+			const definition = manager.getDefinition(file, 12, 17);
+			assertEquals(
+				definition[0]?.range.start.line,
+				5,
+				"C++ call should resolve to the greet definition",
+			);
+		},
+	);
+});
+
+test("TreeSitterManager: language-specific queries improve PowerShell navigation", async () => {
+	await withTempDir(
+		{
+			"profile.ps1": `function GetGreeting($Name) { $local = $Name; return $local }
+GetGreeting "world"
+`,
+		},
+		async (dir) => {
+			const file = join(dir, "profile.ps1");
+			const manager = new TreeSitterManager();
+			const symbols = manager.getDocumentSymbols(file).map((symbol) => symbol.name);
+			assert(
+				symbols.includes("GetGreeting"),
+				`Expected PowerShell function symbol, got: ${symbols.join(", ")}`,
+			);
+
+			const definition = manager.getDefinition(file, 2, 2);
+			assertEquals(
+				definition[0]?.range.start.line,
+				0,
+				"PowerShell command should resolve to the function declaration",
+			);
+		},
+	);
+});
+
+test("TreeSitterManager: language-specific queries improve Python locals", async () => {
+	await withTempDir(
+		{
+			"app.py": `ANSWER = 42
+def greet(name):
+    local = name
+    return local
+
+greet("a")
+`,
+		},
+		async (dir) => {
+			const file = join(dir, "app.py");
+			const manager = new TreeSitterManager();
+
+			const localDefinition = manager.getDefinition(file, 4, 12);
+			assertEquals(
+				localDefinition[0]?.range.start.line,
+				2,
+				"Python local identifier should resolve to the assignment",
+			);
+
+			const references = manager.getReferences(file, 2, 5);
+			assert(
+				references.length >= 2,
+				`Expected Python references for declaration plus call, got ${references.length}`,
+			);
+		},
+	);
+});
+
+test("TreeSitterManager: query-backed symbols cover CSS, INI, and regex", async () => {
+	await withTempDir(
+		{
+			"style.css": `.card { color: red; }
+#app { display: flex; }
+`,
+			"config.ini": `[core]
+name = value
+path = /tmp
+`,
+			"pattern.regex": `^(foo|bar)+$
+`,
+		},
+		async (dir) => {
+			const manager = new TreeSitterManager();
+
+			const cssSymbols = manager.getDocumentSymbols(join(dir, "style.css")).map((symbol) => symbol.name);
+			assert(
+				cssSymbols.includes(".card") && cssSymbols.includes("#app"),
+				`Expected CSS selector symbols, got: ${cssSymbols.join(", ")}`,
+			);
+
+			const iniSymbols = manager.getDocumentSymbols(join(dir, "config.ini")).map((symbol) => symbol.name);
+			assert(
+				iniSymbols.includes("core") && iniSymbols.includes("name") && iniSymbols.includes("path"),
+				`Expected INI section and setting symbols, got: ${iniSymbols.join(", ")}`,
+			);
+
+			const regexSymbols = manager.getDocumentSymbols(join(dir, "pattern.regex")).map((symbol) => symbol.name);
+			assert(
+				regexSymbols.some((symbol) => symbol.includes("foo") || symbol.includes("bar")),
+				`Expected regex symbols from the pattern query, got: ${regexSymbols.join(", ")}`,
+			);
+		},
+	);
+});
+
 test("LSPManager: falls back to Tree-sitter diagnostics without LSP root", async () => {
 	await withTempDir(
 		{
