@@ -1267,6 +1267,12 @@ Project-side strict example:
     "formatters": {
       "prettier": {}
     }
+  },
+  "analyzer": {
+    "hookMode": "agent_end",
+    "tools": {
+      "biome-lint": {}
+    }
   }
 }
 ```
@@ -1315,6 +1321,9 @@ Project-side strict example:
   PowerShell extension already ships one.
 - Strictness note: PowerShell strictness is mostly language-server diagnostics,
   script analysis, and project-side conventions.
+- Discovery note: if `lsp-pi` cannot auto-find your PSES bundle, set
+  `PSES_BUNDLE_PATH`, set `PSES_START_SCRIPT`, or override
+  `lsp.servers.powershell.command` / `args` in `.pi/settings.json`.
 
 `minimal`
 
@@ -1337,6 +1346,18 @@ Project-side strict example:
     "hookMode": "edit_write",
     "servers": {
       "powershell": {}
+    }
+  },
+  "formatter": {
+    "hookMode": "write",
+    "formatters": {
+      "psscriptanalyzer": {}
+    }
+  },
+  "analyzer": {
+    "hookMode": "agent_end",
+    "tools": {
+      "psscriptanalyzer": {}
     }
   }
 }
@@ -1422,8 +1443,7 @@ Project-side strict example:
 
 - Install: `cargo install taplo-cli --locked`
 - Strictness note: TOML strictness is mostly schema validation and project-side
-  config validation. `lsp-pi` wires Taplo as an LSP, not as a built-in
-  formatter.
+  config validation. `lsp-pi` wires Taplo as an LSP, formatter, and analyzer.
 
 `minimal`
 
@@ -1446,6 +1466,18 @@ Project-side strict example:
     "hookMode": "edit_write",
     "servers": {
       "taplo": {}
+    }
+  },
+  "formatter": {
+    "hookMode": "write",
+    "formatters": {
+      "taplo": {}
+    }
+  },
+  "analyzer": {
+    "hookMode": "agent_end",
+    "tools": {
+      "taplo-check": {}
     }
   }
 }

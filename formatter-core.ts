@@ -72,6 +72,14 @@ function resolveNodeBinary(root: string, binaryName: string): string | undefined
   return which(binaryName);
 }
 
+function preferredPowerShellCommand(): string | undefined {
+  return which("pwsh") ?? which("powershell");
+}
+
+function escapeForSingleQuotedPowerShell(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
 function formatterCwd(filePath: string, cwd: string, settings: FormatterSettings, fallbackMarkers: string[] = []): string {
   const markers = settings.rootMarkers && settings.rootMarkers.length > 0 ? settings.rootMarkers : fallbackMarkers;
   return markers.length > 0 ? (findRoot(filePath, cwd, markers) ?? cwd) : cwd;
@@ -87,7 +95,7 @@ function configuredFormatterCommand(
   cwd: string,
   settings: FormatterSettings,
   defaultCommand: (root: string) => string | undefined,
-  defaultArgs: (file: string) => string[],
+  defaultArgs: (file: string, root: string) => string[],
   fallbackMarkers: string[] = [],
 ): FormatterCommand | undefined {
   if (settings.disabled) return undefined;
@@ -98,7 +106,7 @@ function configuredFormatterCommand(
 
   return {
     command,
-    args: settings.args ?? defaultArgs(filePath),
+    args: settings.args ?? defaultArgs(filePath, root),
     cwd: root,
     env: buildFormatterEnv(settings),
   };
@@ -108,7 +116,7 @@ function directBinaryFormatter(
   id: string,
   extensions: string[],
   binaryName: string,
-  defaultArgs: (file: string) => string[],
+  defaultArgs: (file: string, root: string) => string[],
   rootMarkers: string[] = [],
 ): FormatterConfig {
   return {
@@ -130,7 +138,7 @@ function nodeBinaryFormatter(
   id: string,
   extensions: string[],
   binaryName: string,
-  defaultArgs: (file: string) => string[],
+  defaultArgs: (file: string, root: string) => string[],
   rootMarkers: string[] = ["package.json"],
 ): FormatterConfig {
   return {
@@ -148,6 +156,39 @@ function nodeBinaryFormatter(
   };
 }
 
+function powerShellModuleFormatter(
+  id: string,
+  extensions: string[],
+  rootMarkers: string[] = [],
+): FormatterConfig {
+  return {
+    id,
+    extensions,
+    rootMarkers,
+    resolveCommand: (filePath, cwd, settings) => configuredFormatterCommand(
+      filePath,
+      cwd,
+      settings,
+      () => preferredPowerShellCommand(),
+      (file, root) => {
+        const escapedFile = escapeForSingleQuotedPowerShell(file);
+        const settingsPath = path.join(root, "PSScriptAnalyzerSettings.psd1");
+        const escapedSettingsPath = escapeForSingleQuotedPowerShell(settingsPath);
+        const settingsArg = fs.existsSync(settingsPath)
+          ? ` -Settings '${escapedSettingsPath}'`
+          : "";
+        return [
+          "-NoLogo",
+          "-NoProfile",
+          "-Command",
+          `Import-Module PSScriptAnalyzer -ErrorAction Stop; $content = Get-Content -Raw '${escapedFile}'; $formatted = Invoke-Formatter -ScriptDefinition $content${settingsArg}; [System.IO.File]::WriteAllText('${escapedFile}', $formatted, [System.Text.UTF8Encoding]::new($false))`,
+        ];
+      },
+      rootMarkers,
+    ),
+  };
+}
+
 const JS_LIKE_EXTENSIONS = [
   ".js", ".jsx", ".cjs", ".mjs", ".ts", ".tsx", ".cts", ".mts",
   ".json", ".jsonc", ".css", ".scss", ".less", ".html",
@@ -160,6 +201,7 @@ export const FORMATTERS: FormatterConfig[] = [
   directBinaryFormatter("rumdl", [".md", ".mdx"], "rumdl", (file) => ["fmt", file]),
   nodeBinaryFormatter("biome", JS_LIKE_EXTENSIONS, "biome", (file) => ["format", "--write", file], ["biome.json", "biome.jsonc", "package.json"]),
   nodeBinaryFormatter("prettier", PRETTIER_EXTENSIONS, "prettier", (file) => ["--write", file], ["package.json", ".prettierrc", ".prettierrc.json", "prettier.config.js", "prettier.config.cjs", "prettier.config.mjs"]),
+  directBinaryFormatter("taplo", [".toml"], "taplo", (file) => ["fmt", file], ["taplo.toml", ".taplo.toml", "pyproject.toml", "Cargo.toml"]),
   directBinaryFormatter("ruff", [".py", ".pyi"], "ruff", (file) => ["format", file], ["pyproject.toml", "ruff.toml"]),
   directBinaryFormatter("uv", [".py", ".pyi"], "uv", (file) => ["tool", "run", "ruff", "format", file], ["pyproject.toml", "uv.lock"]),
   directBinaryFormatter("gofmt", [".go"], "gofmt", (file) => ["-w", file], ["go.mod", "go.work"]),
@@ -172,6 +214,7 @@ export const FORMATTERS: FormatterConfig[] = [
   directBinaryFormatter("mix", [".ex", ".exs"], "mix", (file) => ["format", file], ["mix.exs"]),
   directBinaryFormatter("ocamlformat", [".ml", ".mli"], "ocamlformat", (file) => ["-i", file], ["dune-project", ".ocamlformat"]),
   directBinaryFormatter("ormolu", [".hs", ".lhs"], "ormolu", (file) => ["--mode", "inplace", file], ["stack.yaml", "cabal.project", "package.yaml"]),
+  powerShellModuleFormatter("psscriptanalyzer", [".ps1", ".psm1", ".psd1"], ["PSScriptAnalyzerSettings.psd1", "psake.ps1", ".git"]),
   directBinaryFormatter("nixfmt", [".nix"], "nixfmt", (file) => [file]),
   directBinaryFormatter("pint", [".php"], "pint", (file) => [file], ["composer.json", "pint.json"]),
   directBinaryFormatter("rubocop", [".rb", ".rake"], "rubocop", (file) => ["-A", file], ["Gemfile", ".rubocop.yml"]),

@@ -202,28 +202,33 @@ Each entry under `analyzer.tools.<analyzerId>` or `analyzer.analyzers.<analyzerI
 - `ormolu`
 - `pint`
 - `prettier`
+- `psscriptanalyzer`
 - `rumdl`
 - `ruff`
 - `rubocop`
 - `rustfmt`
 - `shfmt`
 - `standardrb`
+- `taplo`
 - `terraform`
 - `uv`
 - `zig`
 
 ## Built-in analyzer IDs
 
+- `biome-lint`
 - `golangci-lint`
 - `hadolint`
 - `karpeslop`
 - `lychee`
 - `markdownlint`
+- `psscriptanalyzer`
 - `ruff-check`
 - `semgrep`
 - `sloppylint`
 - `slopgrep`
 - `shellcheck`
+- `taplo-check`
 - `zippy`
 
 ## Merge rules
@@ -318,6 +323,26 @@ ecosystem, see `docs/language-config-examples.md`.
 }
 ```
 
+### Override the PowerShell Editor Services launch command
+
+```json
+{
+  "lsp": {
+    "servers": {
+      "powershell": {
+        "command": "pwsh",
+        "args": [
+          "-NoLogo",
+          "-NoProfile",
+          "-Command",
+          "& '/opt/PowerShellEditorServices/Start-EditorServices.ps1' -Stdio"
+        ]
+      }
+    }
+  }
+}
+```
+
 ### Enable Semgrep analyzer at agent end
 
 ```json
@@ -343,6 +368,9 @@ ecosystem, see `docs/language-config-examples.md`.
 - `lychee` for broken-link checks in Markdown, HTML, and doc-like text files
 - `shellcheck` for shell scripts
 - `hadolint` for `Dockerfile`
+- `biome-lint` for JSON / JSONC in Biome-based repositories
+- `psscriptanalyzer` for PowerShell linting via `Invoke-ScriptAnalyzer`
+- `taplo-check` for TOML validation via `taplo check`
 - `slopgrep` for Markdown, prose-heavy text files, and LaTeX prose
 - `zippy` for AI/human classification of prose-oriented text, Markdown, and LaTeX files; install with `uv tool install thinkst-zippy`. `lsp-pi` renders the result as a readable score label plus the raw zippy score, but it is still a heuristic delta rather than a calibrated probability or true percentage
 - `sloppylint` for Python AI-generated-code anti-patterns

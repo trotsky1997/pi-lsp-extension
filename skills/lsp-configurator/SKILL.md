@@ -66,9 +66,9 @@ If `deno.json` or `deno.jsonc` exists, prefer `deno` over `typescript`.
 
 ### JSON / TOML / PowerShell
 
-- If the repo has many `.json` / `.jsonc` files or schema-heavy config, propose LSP `json-ls` and formatter `prettier` or `biome`.
-- If the repo has `.toml` files, propose LSP `taplo`.
-- If the repo has `.ps1`, `.psm1`, or `.psd1` files, propose LSP `powershell`.
+- If the repo has many `.json` / `.jsonc` files or schema-heavy config, propose LSP `json-ls`, formatter `prettier` or `biome`, and optionally analyzer `biome-lint` for Biome-based repos.
+- If the repo has `.toml` files, propose LSP `taplo`, formatter `taplo`, and analyzer `taplo-check`.
+- If the repo has `.ps1`, `.psm1`, or `.psd1` files, propose LSP `powershell` plus formatter/analyzer `psscriptanalyzer`.
 
 ### Python
 

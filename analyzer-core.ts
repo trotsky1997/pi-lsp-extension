@@ -69,6 +69,14 @@ function which(cmd: string): string | undefined {
   }
 }
 
+function preferredPowerShellCommand(): string | undefined {
+  return which("pwsh") ?? which("powershell");
+}
+
+function escapeForSingleQuotedPowerShell(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
 function findNearestFile(startDir: string, targets: string[], stopDir: string): string | undefined {
   let current = path.resolve(startDir);
   const stop = path.resolve(stopDir);
@@ -149,11 +157,64 @@ function directBinaryAnalyzer(
   };
 }
 
+function powerShellModuleAnalyzer(
+  id: string,
+  extensions: string[],
+  defaultArgs: (file: string, root: string) => { args: string[]; outputFile?: string },
+  parseOutput: (stdout: string, filePath: string, command: AnalyzerCommand) => AnalyzerFinding[],
+  options: {
+    rootMarkers?: string[];
+    fileNames?: string[];
+    parseNotes?: (stdout: string, filePath: string, command: AnalyzerCommand) => AnalyzerNote[];
+  } = {},
+): AnalyzerConfig {
+  return {
+    id,
+    extensions,
+    fileNames: options.fileNames,
+    rootMarkers: options.rootMarkers,
+    resolveCommand: (filePath, cwd, settings) => configuredAnalyzerCommand(
+      filePath,
+      cwd,
+      settings,
+      () => preferredPowerShellCommand(),
+      defaultArgs,
+      options.rootMarkers,
+    ),
+    parseOutput,
+    parseNotes: options.parseNotes,
+  };
+}
+
 function normalizeSeverity(value: string | undefined): "error" | "warning" | "info" {
   const upper = (value ?? "").toUpperCase();
   if (upper === "ERROR") return "error";
   if (upper === "INFO") return "info";
   return "warning";
+}
+
+function parseJsonPayload(stdout: string): unknown {
+  const trimmed = stdout.trim();
+  if (!trimmed) return undefined;
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // Some tools emit human-readable preambles before the JSON payload.
+  }
+
+  const lines = trimmed.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const candidate = lines.slice(index).join("\n").trim();
+    if (!candidate.startsWith("{") && !candidate.startsWith("[")) continue;
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // keep scanning for the actual payload
+    }
+  }
+
+  return undefined;
 }
 
 function readOutputFileIfPresent(command: AnalyzerCommand, stdout: string): string {
@@ -383,6 +444,101 @@ function parseHadolintOutput(stdout: string, fallbackFilePath: string, command: 
   }
 }
 
+function parseBiomeLintOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
+  try {
+    const parsed = parseJsonPayload(readOutputFileIfPresent(command, stdout)) as {
+      diagnostics?: Array<{
+        severity?: string;
+        message?: string;
+        category?: string;
+        location?: {
+          path?: string;
+          start?: { line?: number; column?: number };
+        };
+      }>;
+    } | undefined;
+    const diagnostics = parsed?.diagnostics ?? [];
+    return diagnostics.map((diagnostic) => ({
+      source: "biome-lint",
+      ruleId: diagnostic.category,
+      message: diagnostic.message ?? diagnostic.category ?? "biome diagnostic",
+      severity: normalizeSeverity(diagnostic.severity),
+      filePath: diagnostic.location?.path ? path.resolve(diagnostic.location.path) : fallbackFilePath,
+      line: diagnostic.location?.start?.line ?? 1,
+      column: diagnostic.location?.start?.column ?? 1,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function parsePSScriptAnalyzerOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
+  try {
+    const parsed = parseJsonPayload(readOutputFileIfPresent(command, stdout));
+    const items = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
+    return items.map((item) => {
+      const issue = item as {
+        RuleName?: string;
+        ruleName?: string;
+        Message?: string;
+        message?: string;
+        Severity?: string;
+        severity?: string;
+        ScriptPath?: string;
+        scriptPath?: string;
+        Line?: number;
+        line?: number;
+        Column?: number;
+        column?: number;
+        Extent?: { File?: string; StartLineNumber?: number; StartColumnNumber?: number };
+        extent?: { File?: string; StartLineNumber?: number; StartColumnNumber?: number };
+      };
+      const extent = issue.Extent ?? issue.extent;
+      const filePath = issue.ScriptPath ?? issue.scriptPath ?? extent?.File ?? fallbackFilePath;
+      return {
+        source: "psscriptanalyzer",
+        ruleId: issue.RuleName ?? issue.ruleName,
+        message: issue.Message ?? issue.message ?? issue.RuleName ?? issue.ruleName ?? "PowerShell analysis finding",
+        severity: normalizeSeverity(issue.Severity ?? issue.severity),
+        filePath: filePath ? path.resolve(filePath) : fallbackFilePath,
+        line: issue.Line ?? issue.line ?? extent?.StartLineNumber ?? 1,
+        column: issue.Column ?? issue.column ?? extent?.StartColumnNumber ?? 1,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+function parseTaploCheckOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
+  try {
+    const output = readOutputFileIfPresent(command, stdout).trim();
+    if (!output) return [];
+
+    const arrowMatch = output.match(/-->\s+(.+?):(\d+):(\d+)/);
+    const plainMatch = output.match(/^(.+?):(\d+):(\d+)\b/m);
+    const match = arrowMatch ?? plainMatch;
+    const resolvedPath = match?.[1] ? path.resolve(match[1]) : fallbackFilePath;
+    const line = match?.[2] ? Number(match[2]) : 1;
+    const column = match?.[3] ? Number(match[3]) : 1;
+    const messageLine = output.split(/\r?\n/).find((lineText) => {
+      const trimmed = lineText.trim();
+      return trimmed.length > 0 && !trimmed.startsWith("-->");
+    }) ?? output;
+
+    return [{
+      source: "taplo-check",
+      message: messageLine.trim(),
+      severity: "error",
+      filePath: resolvedPath,
+      line,
+      column,
+    }];
+  } catch {
+    return [];
+  }
+}
+
 function parseSlopgrepOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
 	try {
 		type SlopgrepIssue = {
@@ -575,6 +731,22 @@ const DEFAULT_SEMGREP_EXTENSIONS = [
 
 export const ANALYZERS: AnalyzerConfig[] = [
   directBinaryAnalyzer(
+    "biome-lint",
+    [".json", ".jsonc"],
+    "biome",
+    (file) => ({ args: ["lint", "--reporter", "json", "--colors=off", file] }),
+    parseBiomeLintOutput,
+    { rootMarkers: ["biome.json", "biome.jsonc", "package.json"] },
+  ),
+  directBinaryAnalyzer(
+    "taplo-check",
+    [".toml"],
+    "taplo",
+    (file) => ({ args: ["check", file] }),
+    parseTaploCheckOutput,
+    { rootMarkers: ["taplo.toml", ".taplo.toml", "pyproject.toml", "Cargo.toml", ".git"] },
+  ),
+  directBinaryAnalyzer(
     "semgrep",
     DEFAULT_SEMGREP_EXTENSIONS,
     "semgrep",
@@ -627,6 +799,28 @@ export const ANALYZERS: AnalyzerConfig[] = [
     (file) => ({ args: ["-f", "json", file] }),
     parseHadolintOutput,
     { fileNames: ["Dockerfile"] },
+  ),
+  powerShellModuleAnalyzer(
+    "psscriptanalyzer",
+    [".ps1", ".psm1", ".psd1"],
+    (file, root) => {
+      const escapedFile = escapeForSingleQuotedPowerShell(file);
+      const settingsPath = path.join(root, "PSScriptAnalyzerSettings.psd1");
+      const escapedSettingsPath = escapeForSingleQuotedPowerShell(settingsPath);
+      const settingsArg = fs.existsSync(settingsPath)
+        ? ` -Settings '${escapedSettingsPath}'`
+        : "";
+      return {
+        args: [
+          "-NoLogo",
+          "-NoProfile",
+          "-Command",
+          `Import-Module PSScriptAnalyzer -ErrorAction Stop; $results = Invoke-ScriptAnalyzer -Path '${escapedFile}' -Recurse:$false${settingsArg} | Select-Object RuleName, Message, Severity, ScriptPath, Line, Column, Extent | ConvertTo-Json -Depth 6 -Compress; if ($null -eq $results -or $results -eq '') { '[]' } else { $results }`,
+        ],
+      };
+    },
+    parsePSScriptAnalyzerOutput,
+    { rootMarkers: ["PSScriptAnalyzerSettings.psd1", "psake.ps1", ".git"] },
   ),
   directBinaryAnalyzer(
     "slopgrep",

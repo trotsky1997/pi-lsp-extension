@@ -1908,6 +1908,43 @@ test("formatter matching: markdown prefers rumdl and avoids biome", async () => 
 	);
 });
 
+test("formatter matching: taplo matches toml files", async () => {
+	await withTempDir(
+		{
+			"taplo.toml": "",
+			"config/app.toml": "title='demo'\n",
+		},
+		async (dir) => {
+			const matches = getFormatterConfigsForFile(
+				join(dir, "config/app.toml"),
+				dir,
+			);
+			assert(
+				matches.some((formatter) => formatter.id === "taplo"),
+				"taplo should match TOML files",
+			);
+		},
+	);
+});
+
+test("formatter matching: psscriptanalyzer matches powershell files", async () => {
+	await withTempDir(
+		{
+			"scripts/profile.ps1": "Write-Host 'hi'\n",
+		},
+		async (dir) => {
+			const matches = getFormatterConfigsForFile(
+				join(dir, "scripts/profile.ps1"),
+				dir,
+			);
+			assert(
+				matches.some((formatter) => formatter.id === "psscriptanalyzer"),
+				"psscriptanalyzer formatter should match PowerShell files",
+			);
+		},
+	);
+});
+
 test("analyzer matching: semgrep matches supported files", async () => {
 	await withTempDir(
 		{
@@ -1918,6 +1955,36 @@ test("analyzer matching: semgrep matches supported files", async () => {
 			assert(
 				matches.some((analyzer) => analyzer.id === "semgrep"),
 				"semgrep should match ts files",
+			);
+		},
+	);
+});
+
+test("analyzer matching: biome-lint matches json files", async () => {
+	await withTempDir(
+		{
+			"config/app.json": "{}\n",
+		},
+		async (dir) => {
+			const matches = getAnalyzerConfigsForFile(join(dir, "config/app.json"), dir);
+			assert(
+				matches.some((analyzer) => analyzer.id === "biome-lint"),
+				"biome-lint should match json files",
+			);
+		},
+	);
+});
+
+test("analyzer matching: taplo-check matches toml files", async () => {
+	await withTempDir(
+		{
+			"config/app.toml": "title = 'demo'\n",
+		},
+		async (dir) => {
+			const matches = getAnalyzerConfigsForFile(join(dir, "config/app.toml"), dir);
+			assert(
+				matches.some((analyzer) => analyzer.id === "taplo-check"),
+				"taplo-check should match toml files",
 			);
 		},
 	);
@@ -2110,6 +2177,21 @@ test("analyzer matching: hadolint matches Dockerfile", async () => {
 			assert(
 				matches.some((analyzer) => analyzer.id === "hadolint"),
 				"hadolint should match Dockerfile",
+			);
+		},
+	);
+});
+
+test("analyzer matching: psscriptanalyzer matches powershell files", async () => {
+	await withTempDir(
+		{
+			"scripts/profile.ps1": "Write-Host 'hi'\n",
+		},
+		async (dir) => {
+			const matches = getAnalyzerConfigsForFile(join(dir, "scripts/profile.ps1"), dir);
+			assert(
+				matches.some((analyzer) => analyzer.id === "psscriptanalyzer"),
+				"psscriptanalyzer should match PowerShell files",
 			);
 		},
 	);
@@ -2332,6 +2414,129 @@ exit 1
 	);
 });
 
+test("runAnalyzersForFile: biome-lint parses JSON diagnostics", async () => {
+	await withTempDir(
+		{
+			".pi": null,
+			"config/app.json": "{}\n",
+		},
+		async (dir) => {
+			const fakeBiome = join(dir, "fake-biome.sh");
+			await writeFile(
+				fakeBiome,
+				`#!/bin/sh
+cat <<EOF
+The --json option is unstable/experimental and its output might change between patches/minor releases.
+{"summary":{"errors":1},"diagnostics":[{"severity":"warning","message":"Property ordering does not match the configured style.","category":"lint/style/useSortedKeys","location":{"start":{"line":2,"column":3}}}],"command":"lint"}
+EOF
+exit 1
+`,
+			);
+			await chmod(fakeBiome, 0o755);
+			await writeFile(
+				join(dir, ".pi/settings.json"),
+				JSON.stringify({
+					analyzer: {
+						analyzers: {
+							"biome-lint": { command: fakeBiome },
+							semgrep: { disabled: true },
+						},
+					},
+				}),
+			);
+
+			const result = await runAnalyzersForFile(
+				join(dir, "config/app.json"),
+				dir,
+			);
+			assertIncludes(
+				result.analyzerIds ?? [],
+				"biome-lint",
+				"biome-lint should be reported as the analyzer that ran",
+			);
+			assertEquals(result.findings.length, 1, "Expected one biome finding");
+			assertEquals(
+				result.findings[0]?.source,
+				"biome-lint",
+				"Expected biome-lint finding source",
+			);
+			assertEquals(
+				result.findings[0]?.ruleId,
+				"lint/style/useSortedKeys",
+				"Expected biome category as rule id",
+			);
+			assertEquals(
+				result.findings[0]?.line,
+				2,
+				"Expected biome line number",
+			);
+			assertEquals(
+				result.findings[0]?.column,
+				3,
+				"Expected biome column number",
+			);
+		},
+	);
+});
+
+test("runAnalyzersForFile: taplo-check parses validation errors", async () => {
+	await withTempDir(
+		{
+			".pi": null,
+			"config/app.toml": "title = 'demo'\n",
+		},
+		async (dir) => {
+			const fakeTaplo = join(dir, "fake-taplo.sh");
+			await writeFile(
+				fakeTaplo,
+				`#!/bin/sh
+cat <<EOF
+duplicate key: title
+--> $2:3:5
+EOF
+exit 1
+`,
+			);
+			await chmod(fakeTaplo, 0o755);
+			await writeFile(
+				join(dir, ".pi/settings.json"),
+				JSON.stringify({
+					analyzer: {
+						analyzers: {
+							"taplo-check": { command: fakeTaplo },
+						},
+					},
+				}),
+			);
+
+			const result = await runAnalyzersForFile(
+				join(dir, "config/app.toml"),
+				dir,
+			);
+			assertIncludes(
+				result.analyzerIds ?? [],
+				"taplo-check",
+				"taplo-check should be reported as the analyzer that ran",
+			);
+			assertEquals(result.findings.length, 1, "Expected one taplo finding");
+			assertEquals(
+				result.findings[0]?.line,
+				3,
+				"Expected taplo line number",
+			);
+			assertEquals(
+				result.findings[0]?.column,
+				5,
+				"Expected taplo column number",
+			);
+			assert(
+				result.findings[0]?.message.includes("duplicate key") ?? false,
+				`Expected taplo message to mention duplicate key, got ${result.findings[0]?.message ?? "<missing>"}`,
+			);
+		},
+	);
+});
+
 test("runAnalyzersForFile: zippy parses classification notes", async () => {
 	await withTempDir(
 		{
@@ -2404,6 +2609,64 @@ printf "('AI', 0.4205)\n"
 			assert(
 				!result.error,
 				`Did not expect parsed zippy output to be treated as an analyzer error: ${result.error ?? ""}`,
+			);
+		},
+	);
+});
+
+test("runAnalyzersForFile: psscriptanalyzer parses findings", async () => {
+	await withTempDir(
+		{
+			".pi": null,
+			"scripts/profile.ps1": "Write-Host 'hi'\n",
+		},
+		async (dir) => {
+			const fakePssa = join(dir, "fake-pssa.sh");
+			await writeFile(
+				fakePssa,
+				`#!/bin/sh
+cat <<EOF
+[{"RuleName":"PSAvoidUsingWriteHost","Message":"Avoid using Write-Host","Severity":"Warning","Line":1,"Column":1}]
+EOF
+exit 1
+`,
+			);
+			await chmod(fakePssa, 0o755);
+			await writeFile(
+				join(dir, ".pi/settings.json"),
+				JSON.stringify({
+					analyzer: {
+						analyzers: {
+							psscriptanalyzer: { command: fakePssa },
+						},
+					},
+				}),
+			);
+
+			const result = await runAnalyzersForFile(
+				join(dir, "scripts/profile.ps1"),
+				dir,
+			);
+			assertIncludes(
+				result.analyzerIds ?? [],
+				"psscriptanalyzer",
+				"psscriptanalyzer should be reported as the analyzer that ran",
+			);
+			assertEquals(result.findings.length, 1, "Expected one PowerShell finding");
+			assertEquals(
+				result.findings[0]?.ruleId,
+				"PSAvoidUsingWriteHost",
+				"Expected PowerShell rule id",
+			);
+			assertEquals(
+				result.findings[0]?.line,
+				1,
+				"Expected PowerShell finding line number",
+			);
+			assertEquals(
+				result.findings[0]?.column,
+				1,
+				"Expected PowerShell finding column number",
 			);
 		},
 	);

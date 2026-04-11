@@ -94,28 +94,33 @@ Common keys:
 - `ormolu`
 - `pint`
 - `prettier`
+- `psscriptanalyzer`
 - `rumdl`
 - `ruff`
 - `rubocop`
 - `rustfmt`
 - `shfmt`
 - `standardrb`
+- `taplo`
 - `terraform`
 - `uv`
 - `zig`
 
 ## Built-in analyzer IDs
 
+- `biome-lint`
 - `semgrep`
 - `ruff-check`
 - `golangci-lint`
 - `karpeslop`
 - `lychee`
 - `markdownlint`
+- `psscriptanalyzer`
 - `shellcheck`
 - `hadolint`
 - `slopgrep`
 - `sloppylint`
+- `taplo-check`
 - `zippy`
 
 ## Good default mappings
@@ -127,13 +132,13 @@ ecosystem, see `docs/language-config-examples.md`.
 - TypeScript / JavaScript: `typescript`, formatter `biome` or `prettier`, analyzer `semgrep`
 - TypeScript / JavaScript AI-slop scans: optionally add analyzer `karpeslop`
 - Deno: `deno`
-- JSON / JSONC: `json-ls`, formatter `prettier` or `biome`
+- JSON / JSONC: `json-ls`, formatter `prettier` or `biome`, optionally analyzer `biome-lint`
 - Python: provider `basedpyright` or `ty`, formatter `ruff`, analyzer `ruff-check`
 - Python AI-code-quality scans: optionally add analyzer `sloppylint`
 - Go: `gopls`, formatter `gofmt`, analyzer `golangci-lint`
 - Rust: `rust-analyzer`, formatter `rustfmt`
-- TOML: `taplo`
-- PowerShell: `powershell`
+- TOML: `taplo`, formatter `taplo`, analyzer `taplo-check`
+- PowerShell: `powershell`, formatter/analyzer `psscriptanalyzer`; if PSES is not auto-discovered, set `PSES_BUNDLE_PATH` / `PSES_START_SCRIPT` or override the server command
 - Markdown: `markdown` via `markdown-oxide`, formatter `rumdl`, analyzer `markdownlint`
 - Markdown broken-link checks: optionally add analyzer `lychee`
 - Markdown / prose-heavy docs: optionally add analyzer `slopgrep`

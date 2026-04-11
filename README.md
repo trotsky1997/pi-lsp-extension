@@ -133,12 +133,14 @@ Built-in formatter IDs:
 - `ormolu`
 - `pint`
 - `prettier`
+- `psscriptanalyzer`
 - `rumdl`
 - `ruff`
 - `rubocop`
 - `rustfmt`
 - `shfmt`
 - `standardrb`
+- `taplo`
 - `terraform`
 - `uv`
 - `zig`
@@ -149,16 +151,19 @@ Formatters are selected by file extension and binary availability. Project setti
 
 Built-in analyzer IDs:
 
+- `biome-lint`
 - `golangci-lint`
 - `hadolint`
 - `karpeslop`
 - `lychee`
 - `markdownlint`
+- `psscriptanalyzer`
 - `ruff-check`
 - `semgrep`
 - `slopgrep`
 - `sloppylint`
 - `shellcheck`
+- `taplo-check`
 - `zippy`
 
 Analyzers are for extra diagnostics, not LSP features and not file rewriting.
@@ -169,7 +174,7 @@ Multiple analyzers can match and run for the same file.
 Typical install commands:
 
 ```bash
-# Core JS / TS / Markdown / JSON
+# Core JS / TS / Markdown / JSON / TOML
 npm i -g typescript-language-server typescript prettier @biomejs/biome
 npm i -g karpeslop
 npm i -g rumdl markdownlint-cli
@@ -185,6 +190,7 @@ cargo install taplo-cli --locked
 # PowerShell
 # Install PowerShell 7+ plus a PowerShell Editor Services bundle.
 # The VS Code PowerShell extension already bundles PowerShellEditorServices.
+pwsh -NoLogo -NoProfile -Command "Install-Module PSScriptAnalyzer -Scope CurrentUser"
 
 # Vue / Svelte / Astro / Prisma
 npm i -g @vue/language-server svelte-language-server @astrojs/language-server
@@ -239,9 +245,13 @@ Notes:
 
 - `sourcekit-lsp`, `dart format`, `mix format`, `gofmt`, and `rustfmt` often come from their main toolchains.
 - `vscode-langservers-extracted` provides `vscode-json-language-server` for JSON / JSONC support.
+- `biome-lint` can be used as an analyzer for JSON / JSONC repositories that already standardize on Biome.
 - `markdown-oxide` is the built-in Markdown LSP and focuses on Markdown/PKM navigation features.
 - `taplo` powers the built-in TOML LSP via `taplo lsp stdio`; use cargo or release binaries rather than the npm build if you need LSP support.
-- PowerShell support uses PowerShell Editor Services under `pwsh`; if auto-discovery misses your bundle, set `PSES_BUNDLE_PATH` or override `lsp.servers.powershell.command` / `args`.
+- `taplo` also powers the built-in TOML formatter hook via `taplo fmt`.
+- `taplo-check` powers the built-in TOML analyzer hook via `taplo check`.
+- PowerShell support uses PowerShell Editor Services under `pwsh`; if auto-discovery misses your bundle, set `PSES_BUNDLE_PATH`, point directly at `PSES_START_SCRIPT`, or override `lsp.servers.powershell.command` / `args`.
+- `psscriptanalyzer` powers the built-in PowerShell analyzer and formatter hooks.
 - `rumdl` is the preferred Markdown formatter (`rumdl fmt`).
 - `semgrep` is an analyzer, not an LSP or formatter.
 - `lychee` checks broken links in Markdown, HTML, and other doc-like text files.
