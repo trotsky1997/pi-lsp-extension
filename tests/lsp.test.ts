@@ -139,6 +139,27 @@ test("LANGUAGE_IDS: JavaScript extensions", async () => {
 	);
 });
 
+test("LANGUAGE_IDS: JSON / TOML / PowerShell extensions", async () => {
+	assertEquals(LANGUAGE_IDS[".json"], "json", ".json should map to json");
+	assertEquals(LANGUAGE_IDS[".jsonc"], "jsonc", ".jsonc should map to jsonc");
+	assertEquals(LANGUAGE_IDS[".toml"], "toml", ".toml should map to toml");
+	assertEquals(
+		LANGUAGE_IDS[".ps1"],
+		"powershell",
+		".ps1 should map to powershell",
+	);
+	assertEquals(
+		LANGUAGE_IDS[".psm1"],
+		"powershell",
+		".psm1 should map to powershell",
+	);
+	assertEquals(
+		LANGUAGE_IDS[".psd1"],
+		"powershell",
+		".psd1 should map to powershell",
+	);
+});
+
 test("LANGUAGE_IDS: Dart extension", async () => {
 	assertEquals(LANGUAGE_IDS[".dart"], "dart", ".dart should map to dart");
 });
@@ -230,6 +251,27 @@ test("LSP_SERVERS: has Swift server", async () => {
 	assertIncludes(server!.extensions, ".swift", "Should handle .swift");
 });
 
+test("LSP_SERVERS: has JSON server", async () => {
+	const server = LSP_SERVERS.find((s) => s.id === "json-ls");
+	assert(server !== undefined, "Should have json-ls server");
+	assertIncludes(server!.extensions, ".json", "Should handle .json");
+	assertIncludes(server!.extensions, ".jsonc", "Should handle .jsonc");
+});
+
+test("LSP_SERVERS: has Taplo server", async () => {
+	const server = LSP_SERVERS.find((s) => s.id === "taplo");
+	assert(server !== undefined, "Should have taplo server");
+	assertIncludes(server!.extensions, ".toml", "Should handle .toml");
+});
+
+test("LSP_SERVERS: has PowerShell server", async () => {
+	const server = LSP_SERVERS.find((s) => s.id === "powershell");
+	assert(server !== undefined, "Should have powershell server");
+	assertIncludes(server!.extensions, ".ps1", "Should handle .ps1");
+	assertIncludes(server!.extensions, ".psm1", "Should handle .psm1");
+	assertIncludes(server!.extensions, ".psd1", "Should handle .psd1");
+});
+
 test("LSP_SERVERS: has Pyright server", async () => {
 	const server = LSP_SERVERS.find((s) => s.id === "pyright");
 	assert(server !== undefined, "Should have pyright server");
@@ -258,12 +300,15 @@ test("LSP_SERVERS: includes opencode-style built-ins", async () => {
 		"clangd",
 		"deno",
 		"eslint",
+		"json-ls",
 		"lua-ls",
 		"markdown",
 		"texlab",
 		"nixd",
 		"php",
+		"powershell",
 		"prisma",
+		"taplo",
 		"terraform",
 		"tinymist",
 		"yaml-ls",
@@ -354,6 +399,63 @@ test("markdown: prefers moxide marker root", async () => {
 				root,
 				join(dir, "vault"),
 				"Markdown should use .moxide.toml root when present",
+			);
+		},
+	);
+});
+
+test("json-ls: uses workspace root for standalone json files", async () => {
+	await withTempDir(
+		{
+			"config/app.json": "{}",
+		},
+		async (dir) => {
+			const server = LSP_SERVERS.find((s) => s.id === "json-ls")!;
+			const root = server.findRoot(join(dir, "config/app.json"), dir, {});
+			assertEquals(root, dir, "JSON should fall back to workspace root");
+		},
+	);
+});
+
+test("taplo: finds root with taplo.toml", async () => {
+	await withTempDir(
+		{
+			"workspace/taplo.toml": "",
+			"workspace/config/settings.toml": "title = 'demo'\n",
+		},
+		async (dir) => {
+			const server = LSP_SERVERS.find((s) => s.id === "taplo")!;
+			const root = server.findRoot(
+				join(dir, "workspace/config/settings.toml"),
+				dir,
+				{},
+			);
+			assertEquals(
+				root,
+				join(dir, "workspace"),
+				"Taplo should find root at taplo.toml location",
+			);
+		},
+	);
+});
+
+test("powershell: finds root with PSScriptAnalyzerSettings.psd1", async () => {
+	await withTempDir(
+		{
+			"scripts/PSScriptAnalyzerSettings.psd1": "@{}\n",
+			"scripts/tools/profile.ps1": "Write-Host 'hi'\n",
+		},
+		async (dir) => {
+			const server = LSP_SERVERS.find((s) => s.id === "powershell")!;
+			const root = server.findRoot(
+				join(dir, "scripts/tools/profile.ps1"),
+				dir,
+				{},
+			);
+			assertEquals(
+				root,
+				join(dir, "scripts"),
+				"PowerShell should find root at PSScriptAnalyzerSettings.psd1 location",
 			);
 		},
 	);
@@ -2114,9 +2216,11 @@ exit 2
 				JSON.stringify({
 					analyzer: {
 						analyzers: {
+							semgrep: { disabled: true },
 							lychee: { command: fakeLychee },
 							markdownlint: { disabled: true },
 							slopgrep: { disabled: true },
+							zippy: { disabled: true },
 						},
 					},
 				}),
@@ -2189,6 +2293,7 @@ exit 1
 							semgrep: { disabled: true },
 							lychee: { disabled: true },
 							slopgrep: { disabled: true },
+							zippy: { disabled: true },
 							markdownlint: { command: fakeMarkdownlint },
 						},
 					},

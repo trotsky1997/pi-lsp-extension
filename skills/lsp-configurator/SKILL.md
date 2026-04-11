@@ -64,6 +64,12 @@ If `package.json` or TS config files exist, usually propose:
 
 If `deno.json` or `deno.jsonc` exists, prefer `deno` over `typescript`.
 
+### JSON / TOML / PowerShell
+
+- If the repo has many `.json` / `.jsonc` files or schema-heavy config, propose LSP `json-ls` and formatter `prettier` or `biome`.
+- If the repo has `.toml` files, propose LSP `taplo`.
+- If the repo has `.ps1`, `.psm1`, or `.psd1` files, propose LSP `powershell`.
+
 ### Python
 
 If Python files or `pyproject.toml` exist, propose:

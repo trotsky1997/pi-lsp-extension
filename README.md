@@ -84,6 +84,7 @@ Built-in LSP server IDs:
 - `gopls`
 - `hls`
 - `jdtls`
+- `json-ls`
 - `julials`
 - `kotlin`
 - `lua-ls`
@@ -92,10 +93,12 @@ Built-in LSP server IDs:
 - `ocaml-lsp`
 - `oxlint`
 - `php`
+- `powershell`
 - `prisma`
 - `pyright`
 - `basedpyright`
 - `texlab`
+- `taplo`
 - `ty`
 - `ruby-lsp`
 - `rust-analyzer`
@@ -166,7 +169,7 @@ Multiple analyzers can match and run for the same file.
 Typical install commands:
 
 ```bash
-# Core JS / TS / Markdown
+# Core JS / TS / Markdown / JSON
 npm i -g typescript-language-server typescript prettier @biomejs/biome
 npm i -g karpeslop
 npm i -g rumdl markdownlint-cli
@@ -177,6 +180,11 @@ uv tool install git+https://github.com/trotsky1997/slopgrep.git
 uv tool install thinkst-zippy
 cargo install lychee
 cargo install --locked --git https://github.com/Feel-ix-343/markdown-oxide.git markdown-oxide
+cargo install taplo-cli --locked
+
+# PowerShell
+# Install PowerShell 7+ plus a PowerShell Editor Services bundle.
+# The VS Code PowerShell extension already bundles PowerShellEditorServices.
 
 # Vue / Svelte / Astro / Prisma
 npm i -g @vue/language-server svelte-language-server @astrojs/language-server
@@ -230,7 +238,10 @@ brew install zls ocamlformat ormolu cljfmt
 Notes:
 
 - `sourcekit-lsp`, `dart format`, `mix format`, `gofmt`, and `rustfmt` often come from their main toolchains.
+- `vscode-langservers-extracted` provides `vscode-json-language-server` for JSON / JSONC support.
 - `markdown-oxide` is the built-in Markdown LSP and focuses on Markdown/PKM navigation features.
+- `taplo` powers the built-in TOML LSP via `taplo lsp stdio`; use cargo or release binaries rather than the npm build if you need LSP support.
+- PowerShell support uses PowerShell Editor Services under `pwsh`; if auto-discovery misses your bundle, set `PSES_BUNDLE_PATH` or override `lsp.servers.powershell.command` / `args`.
 - `rumdl` is the preferred Markdown formatter (`rumdl fmt`).
 - `semgrep` is an analyzer, not an LSP or formatter.
 - `lychee` checks broken links in Markdown, HTML, and other doc-like text files.

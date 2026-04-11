@@ -1233,6 +1233,44 @@ Project-side strict example:
 }
 ```
 
+### JSON / JSONC
+
+- Install: `npm i -g vscode-langservers-extracted prettier`
+- Strictness note: JSON strictness is mostly schema validation and consistent
+  formatting.
+
+`minimal`
+
+```json
+{
+  "lsp": {
+    "hookMode": "agent_end",
+    "servers": {
+      "json-ls": {}
+    }
+  }
+}
+```
+
+`full strict`
+
+```json
+{
+  "lsp": {
+    "hookMode": "edit_write",
+    "servers": {
+      "json-ls": {}
+    }
+  },
+  "formatter": {
+    "hookMode": "write",
+    "formatters": {
+      "prettier": {}
+    }
+  }
+}
+```
+
 ### Nix
 
 - Install: `brew install nixd nixfmt`
@@ -1266,6 +1304,39 @@ Project-side strict example:
     "hookMode": "write",
     "formatters": {
       "nixfmt": {}
+    }
+  }
+}
+```
+
+### PowerShell
+
+- Install: PowerShell 7+ plus a PowerShell Editor Services bundle. The VS Code
+  PowerShell extension already ships one.
+- Strictness note: PowerShell strictness is mostly language-server diagnostics,
+  script analysis, and project-side conventions.
+
+`minimal`
+
+```json
+{
+  "lsp": {
+    "hookMode": "agent_end",
+    "servers": {
+      "powershell": {}
+    }
+  }
+}
+```
+
+`full strict`
+
+```json
+{
+  "lsp": {
+    "hookMode": "edit_write",
+    "servers": {
+      "powershell": {}
     }
   }
 }
@@ -1342,6 +1413,39 @@ Project-side strict example:
     "hookMode": "agent_end",
     "tools": {
       "semgrep": {}
+    }
+  }
+}
+```
+
+### TOML
+
+- Install: `cargo install taplo-cli --locked`
+- Strictness note: TOML strictness is mostly schema validation and project-side
+  config validation. `lsp-pi` wires Taplo as an LSP, not as a built-in
+  formatter.
+
+`minimal`
+
+```json
+{
+  "lsp": {
+    "hookMode": "agent_end",
+    "servers": {
+      "taplo": {}
+    }
+  }
+}
+```
+
+`full strict`
+
+```json
+{
+  "lsp": {
+    "hookMode": "edit_write",
+    "servers": {
+      "taplo": {}
     }
   }
 }

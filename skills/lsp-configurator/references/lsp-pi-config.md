@@ -50,6 +50,7 @@ Common keys:
 - `gopls`
 - `hls`
 - `jdtls`
+- `json-ls`
 - `julials`
 - `kotlin`
 - `lua-ls`
@@ -58,9 +59,11 @@ Common keys:
 - `ocaml-lsp`
 - `oxlint`
 - `php`
+- `powershell`
 - `prisma`
 - `pyright`
 - `basedpyright`
+- `taplo`
 - `ty`
 - `ruby-lsp`
 - `rust-analyzer`
@@ -124,10 +127,13 @@ ecosystem, see `docs/language-config-examples.md`.
 - TypeScript / JavaScript: `typescript`, formatter `biome` or `prettier`, analyzer `semgrep`
 - TypeScript / JavaScript AI-slop scans: optionally add analyzer `karpeslop`
 - Deno: `deno`
+- JSON / JSONC: `json-ls`, formatter `prettier` or `biome`
 - Python: provider `basedpyright` or `ty`, formatter `ruff`, analyzer `ruff-check`
 - Python AI-code-quality scans: optionally add analyzer `sloppylint`
 - Go: `gopls`, formatter `gofmt`, analyzer `golangci-lint`
 - Rust: `rust-analyzer`, formatter `rustfmt`
+- TOML: `taplo`
+- PowerShell: `powershell`
 - Markdown: `markdown` via `markdown-oxide`, formatter `rumdl`, analyzer `markdownlint`
 - Markdown broken-link checks: optionally add analyzer `lychee`
 - Markdown / prose-heavy docs: optionally add analyzer `slopgrep`

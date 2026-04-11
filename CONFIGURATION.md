@@ -157,6 +157,7 @@ Each entry under `analyzer.tools.<analyzerId>` or `analyzer.analyzers.<analyzerI
 - `gopls`
 - `hls`
 - `jdtls`
+- `json-ls`
 - `julials`
 - `kotlin`
 - `lua-ls`
@@ -165,10 +166,12 @@ Each entry under `analyzer.tools.<analyzerId>` or `analyzer.analyzers.<analyzerI
 - `ocaml-lsp`
 - `oxlint`
 - `php`
+- `powershell`
 - `prisma`
 - `pyright`
 - `basedpyright`
 - `texlab`
+- `taplo`
 - `ty`
 - `ruby-lsp`
 - `rust-analyzer`

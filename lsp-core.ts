@@ -65,6 +65,7 @@ export const LANGUAGE_IDS: Record<string, string> = {
   ".dart": "dart", ".ts": "typescript", ".tsx": "typescriptreact",
   ".js": "javascript", ".jsx": "javascriptreact", ".mjs": "javascript",
   ".cjs": "javascript", ".mts": "typescript", ".cts": "typescript",
+  ".json": "json", ".jsonc": "jsonc", ".toml": "toml",
   ".md": "markdown", ".mdx": "mdx",
   ".tex": "latex", ".bib": "bibtex", ".sty": "latex", ".cls": "latex",
   ".vue": "vue", ".svelte": "svelte", ".astro": "astro",
@@ -76,6 +77,7 @@ export const LANGUAGE_IDS: Record<string, string> = {
   ".gleam": "gleam", ".hs": "haskell", ".lhs": "haskell",
   ".java": "java", ".jl": "julia", ".lua": "lua", ".nix": "nix",
   ".ml": "ocaml", ".mli": "ocaml", ".php": "php", ".prisma": "prisma",
+  ".ps1": "powershell", ".psm1": "powershell", ".psd1": "powershell",
   ".rb": "ruby", ".erb": "erb", ".tf": "terraform", ".tfvars": "terraform",
   ".tmLanguage": "xml", ".typ": "typst", ".yaml": "yaml", ".yml": "yaml",
   ".zig": "zig",
@@ -500,6 +502,76 @@ async function spawnSourcekitLsp(root: string, settings: LSPServerSettings): Pro
   return spawnWithFallback(xcrun, [["sourcekit-lsp"], ["sourcekit-lsp", "--stdio"]], root, settings);
 }
 
+function firstExistingFile(candidates: Array<string | undefined>): string | undefined {
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function powerShellEditorServicesBundleCandidates(bundlePath: string): string[] {
+  return [
+    path.join(bundlePath, "PowerShellEditorServices", "Start-EditorServices.ps1"),
+    path.join(bundlePath, "modules", "PowerShellEditorServices", "Start-EditorServices.ps1"),
+    path.join(bundlePath, "Start-EditorServices.ps1"),
+  ];
+}
+
+function vscodeExtensionCandidates(rootDir: string, prefix: string): string[] {
+  try {
+    return fs.readdirSync(rootDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix))
+      .map((entry) => entry.name)
+      .sort()
+      .reverse()
+      .map((name) => path.join(rootDir, name));
+  } catch {
+    return [];
+  }
+}
+
+function findPowerShellEditorServicesScript(): string | undefined {
+  const home = os.homedir();
+  const extensionRoots = [
+    path.join(home, ".vscode", "extensions"),
+    path.join(home, ".vscode-insiders", "extensions"),
+    path.join(home, ".cursor", "extensions"),
+    path.join(home, ".windsurf", "extensions"),
+    path.join(home, ".vscodium", "extensions"),
+  ];
+  const extensionBundles = extensionRoots.flatMap((rootDir) => vscodeExtensionCandidates(rootDir, "ms-vscode.powershell-"));
+  const envBundle = process.env.PSES_BUNDLE_PATH;
+
+  return firstExistingFile([
+    process.env.PSES_START_SCRIPT,
+    ...(envBundle ? powerShellEditorServicesBundleCandidates(envBundle) : []),
+    ...extensionBundles.flatMap((bundleDir) => powerShellEditorServicesBundleCandidates(bundleDir)),
+    path.join(home, ".local", "share", "powershell", "Modules", "PowerShellEditorServices", "Start-EditorServices.ps1"),
+    path.join(home, ".config", "powershell", "Modules", "PowerShellEditorServices", "Start-EditorServices.ps1"),
+    path.join(home, "Documents", "PowerShell", "Modules", "PowerShellEditorServices", "Start-EditorServices.ps1"),
+  ]);
+}
+
+function powerShellEditorServicesArgs(scriptPath: string): string[] {
+  const escapedPath = scriptPath.replace(/'/g, "''");
+  return ["-NoLogo", "-NoProfile", "-Command", `& '${escapedPath}' -Stdio`];
+}
+
+async function spawnPowerShellEditorServices(root: string, settings: LSPServerSettings): Promise<{ process: ChildProcessWithoutNullStreams } | undefined> {
+  const scriptPath = findPowerShellEditorServicesScript();
+  const defaultArgs = scriptPath ? powerShellEditorServicesArgs(scriptPath) : [];
+  return spawnConfiguredCommand(settings, root, async () => {
+    const pwsh = which("pwsh") || which("powershell");
+    if (!pwsh || !scriptPath) return undefined;
+    const process = await spawnChecked(pwsh, defaultArgs, root, settings);
+    return process ? { process } : undefined;
+  }, defaultArgs);
+}
+
 // Server Configs
 export const LSP_SERVERS: LSPServerConfig[] = [
   { id: "markdown", extensions: [".md", ".mdx"], findRoot: markerRootOrWorkspace([".moxide.toml", ".obsidian", ".git"]), spawn: simpleSpawn("markdown-oxide", []) },
@@ -541,12 +613,14 @@ export const LSP_SERVERS: LSPServerConfig[] = [
   { id: "gleam", extensions: [".gleam"], findRoot: markerRoot(["gleam.toml"]), spawn: simpleSpawn("gleam", ["lsp"]) },
   { id: "hls", extensions: [".hs", ".lhs"], findRoot: markerRoot(["hie.yaml", "cabal.project", "stack.yaml", "package.yaml"]), spawn: simpleSpawn("haskell-language-server-wrapper", ["--lsp"]) },
   { id: "jdtls", extensions: [".java"], findRoot: markerRoot(["pom.xml", "build.gradle", "build.gradle.kts", ".project"]), spawn: simpleSpawn("jdtls", []) },
+  { id: "json-ls", extensions: [".json", ".jsonc"], findRoot: workspaceRoot(), spawn: nodeSpawn("vscode-json-language-server", ["--stdio"]) },
   { id: "julials", extensions: [".jl"], findRoot: markerRoot(["Project.toml", "JuliaProject.toml"]), spawn: simpleSpawn("julia-language-server") },
   { id: "lua-ls", extensions: [".lua"], findRoot: markerRoot([".luarc.json", ".luarc.jsonc", "stylua.toml", ".git"]), spawn: simpleSpawn("lua-language-server") },
   { id: "nixd", extensions: [".nix"], findRoot: markerRoot(["flake.nix", "shell.nix", "default.nix"]), spawn: simpleSpawn("nixd") },
   { id: "ocaml-lsp", extensions: [".ml", ".mli"], findRoot: suffixRoot([".opam"], ["dune-project", "dune-workspace"]), spawn: simpleSpawn("ocamllsp") },
   { id: "oxlint", extensions: [".js", ".jsx", ".cjs", ".mjs", ".ts", ".tsx", ".vue", ".svelte"], findRoot: markerRoot(["package.json", "oxlint.json"]), spawn: simpleSpawn("oxc_language_server") },
   { id: "php", extensions: [".php"], findRoot: markerRoot(["composer.json", ".git"]), spawn: nodeSpawn("intelephense", ["--stdio"]) },
+  { id: "powershell", extensions: [".ps1", ".psm1", ".psd1"], findRoot: markerRootOrWorkspace(["PSScriptAnalyzerSettings.psd1", "psake.ps1", ".git"]), spawn: spawnPowerShellEditorServices },
   { id: "prisma", extensions: [".prisma"], findRoot: markerRoot(["schema.prisma", "package.json"]), spawn: nodeSpawn("prisma-language-server", ["--stdio"]) },
   { id: "ruby-lsp", extensions: [".rb", ".erb"], findRoot: markerRoot(["Gemfile", ".ruby-version"]), spawn: simpleSpawn("ruby-lsp") },
   {
@@ -564,6 +638,7 @@ export const LSP_SERVERS: LSPServerConfig[] = [
   },
   { id: "vue", extensions: [".vue"], findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, ["package.json", "vite.config.ts", "vite.config.js"])), spawn: simpleSpawn("vue-language-server") },
   { id: "svelte", extensions: [".svelte"], findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, ["package.json", "svelte.config.js"])), spawn: simpleSpawn("svelteserver") },
+  { id: "taplo", extensions: [".toml"], findRoot: markerRootOrWorkspace(["taplo.toml", ".taplo.toml", "pyproject.toml", "Cargo.toml", ".git"]), spawn: simpleSpawn("taplo", ["lsp", "stdio"]) },
   { id: "terraform", extensions: [".tf", ".tfvars", ".hcl"], findRoot: markerRoot([".terraform", "main.tf", "terraform.tf"]), spawn: simpleSpawn("terraform-ls", ["serve"]) },
   { id: "tinymist", extensions: [".typ"], findRoot: markerRoot(["typst.toml", ".git"]), spawn: simpleSpawn("tinymist") },
   { id: "pyright", extensions: [".py", ".pyi"], findRoot: (f, cwd, settings) => resolveRootWithOverride(f, cwd, settings, () => findRoot(f, cwd, PYRIGHT_FAMILY_ROOT_MARKERS)), spawn: simpleSpawn("pyright-langserver") },
