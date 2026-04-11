@@ -174,7 +174,7 @@ npm i -g vscode-langservers-extracted   # eslint, html, css, json
 npm i -g yaml-language-server bash-language-server
 uv tool install semgrep
 uv tool install git+https://github.com/trotsky1997/slopgrep.git
-pip3 install thinkst-zippy
+uv tool install thinkst-zippy
 cargo install lychee
 cargo install --locked --git https://github.com/Feel-ix-343/markdown-oxide.git markdown-oxide
 

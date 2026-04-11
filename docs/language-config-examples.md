@@ -1070,7 +1070,7 @@ Project-side strict example:
 
 ### Markdown / MDX
 
-- Install: `cargo install --locked --git https://github.com/Feel-ix-343/markdown-oxide.git markdown-oxide`, `npm i -g rumdl markdownlint-cli`, `cargo install lychee`, `uv tool install git+https://github.com/trotsky1997/slopgrep.git`, `pip3 install thinkst-zippy`
+- Install: `cargo install --locked --git https://github.com/Feel-ix-343/markdown-oxide.git markdown-oxide`, `npm i -g rumdl markdownlint-cli`, `cargo install lychee`, `uv tool install git+https://github.com/trotsky1997/slopgrep.git`, `uv tool install thinkst-zippy`
 - Strictness note: Markdown has no type system; strictness means formatting,
   Markdown linting, link checks, and prose or AI-text checks where useful.
 
@@ -1117,7 +1117,7 @@ Project-side strict example:
 
 ### TeX / LaTeX / BibTeX
 
-- Install: `cargo install texlab`, plus optional `uv tool install git+https://github.com/trotsky1997/slopgrep.git` and `pip3 install thinkst-zippy`
+- Install: `cargo install texlab`, plus optional `uv tool install git+https://github.com/trotsky1997/slopgrep.git` and `uv tool install thinkst-zippy`
 - Strictness note: LaTeX has no type-strict mode; strictness means build
   validation and prose-level checks.
 

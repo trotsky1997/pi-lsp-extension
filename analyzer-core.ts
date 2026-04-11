@@ -384,35 +384,44 @@ function parseHadolintOutput(stdout: string, fallbackFilePath: string, command: 
 }
 
 function parseSlopgrepOutput(stdout: string, fallbackFilePath: string, command: AnalyzerCommand): AnalyzerFinding[] {
-  try {
-    const parsed = JSON.parse(readOutputFileIfPresent(command, stdout)) as {
-      findings?: Array<{
-        rule_id?: string;
-        id?: string;
-        message?: string;
-        severity?: string;
-        path?: string;
-        file?: string;
-        line?: number;
-        column?: number;
-        start?: { line?: number; column?: number; col?: number };
-      }>;
-      results?: Array<{
-        rule_id?: string;
-        id?: string;
-        message?: string;
-        severity?: string;
-        path?: string;
-        file?: string;
-        line?: number;
-        column?: number;
-        start?: { line?: number; column?: number; col?: number };
-      }>;
-    };
-    const items = parsed.findings ?? parsed.results ?? [];
-    return items.map((issue) => ({
-      source: "slopgrep",
-      ruleId: issue.rule_id ?? issue.id,
+	try {
+		type SlopgrepIssue = {
+			rule_id?: string;
+			id?: string;
+			message?: string;
+			severity?: string;
+			path?: string;
+			file?: string;
+			line?: number;
+			column?: number;
+			start?: { line?: number; column?: number; col?: number };
+		};
+		const parsed = JSON.parse(readOutputFileIfPresent(command, stdout)) as {
+			findings?: SlopgrepIssue[];
+			results?: Array<
+				SlopgrepIssue & {
+					findings?: SlopgrepIssue[];
+				}
+			>;
+		};
+		const items = [
+			...(parsed.findings ?? []),
+			...(parsed.results ?? []).flatMap((result) => {
+				if (Array.isArray(result.findings) && result.findings.length > 0) {
+					return result.findings.map((issue) => ({
+						...issue,
+						path: issue.path ?? result.path,
+						file: issue.file ?? result.file,
+					}));
+				}
+
+				if (result.message || result.rule_id || result.id) return [result];
+				return [];
+			}),
+		];
+		return items.map((issue) => ({
+			source: "slopgrep",
+			ruleId: issue.rule_id ?? issue.id,
       message: issue.message ?? issue.rule_id ?? issue.id ?? "slopgrep finding",
       severity: normalizeSeverity(issue.severity),
       filePath: issue.path ? path.resolve(issue.path) : issue.file ? path.resolve(issue.file) : fallbackFilePath,
@@ -715,19 +724,23 @@ export async function runAnalyzersForFile(filePath: string, cwd: string): Promis
 
     analyzerIds.push(analyzer.id);
 
-    try {
-      const result = await runCommand(command);
-      const parseSource = result.stdout.trim() ? result.stdout : result.stderr;
-      const parsedFromStderr = !result.stdout.trim() && result.stderr.trim().length > 0;
-      const parsedFindings = analyzer.parseOutput(parseSource, absPath, command).filter((finding) => finding.filePath === "" || path.resolve(finding.filePath) === absPath);
-      const parsedNotes = analyzer.parseNotes?.(parseSource, absPath, command) ?? [];
-      findings.push(...parsedFindings);
-      notes.push(...parsedNotes);
+		try {
+			const result = await runCommand(command);
+			const parseSource = result.stdout.trim() ? result.stdout : result.stderr;
+			const parsedFromStderr = !result.stdout.trim() && result.stderr.trim().length > 0;
+			const parsedFindings = analyzer.parseOutput(parseSource, absPath, command).filter((finding) => finding.filePath === "" || path.resolve(finding.filePath) === absPath);
+			const parsedNotes = analyzer.parseNotes?.(parseSource, absPath, command) ?? [];
+			const allowParsedNoMatchExit = analyzer.id === "slopgrep"
+				&& result.code === 1
+				&& result.stderr.trim().length === 0
+				&& parseSource.trim().length > 0;
+			findings.push(...parsedFindings);
+			notes.push(...parsedNotes);
 
-      if (result.code !== 0 && parsedFindings.length === 0 && parsedNotes.length === 0) {
-        errors.push(`${analyzer.id}: ${result.stderr.trim() || (result.signal ? `analyzer exited via signal ${result.signal}` : `analyzer exited with code ${result.code}`)}`);
-        continue;
-      }
+			if (result.code !== 0 && parsedFindings.length === 0 && parsedNotes.length === 0 && !allowParsedNoMatchExit) {
+				errors.push(`${analyzer.id}: ${result.stderr.trim() || (result.signal ? `analyzer exited via signal ${result.signal}` : `analyzer exited with code ${result.code}`)}`);
+				continue;
+			}
       if (result.stderr.trim() && !parsedFromStderr) errors.push(`${analyzer.id}: ${result.stderr.trim()}`);
     } catch (error) {
       errors.push(`${analyzer.id}: ${error instanceof Error ? error.message : String(error)}`);

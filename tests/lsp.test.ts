@@ -2304,6 +2304,154 @@ printf "('AI', 0.4205)\n"
 	);
 });
 
+test("runAnalyzersForFile: slopgrep ignores empty nested results", async () => {
+	await withTempDir(
+		{
+			".pi": null,
+			"docs/README.md": "# Notes\n\n- Keep this short.\n",
+		},
+		async (dir) => {
+			const fakeSlopgrep = join(dir, "fake-slopgrep.sh");
+			await writeFile(
+				fakeSlopgrep,
+				`#!/bin/sh
+cat <<EOF
+{
+  "results": [
+    {
+      "path": "$1",
+      "score": 0,
+      "findings": []
+    }
+  ]
+}
+EOF
+`,
+			);
+			await chmod(fakeSlopgrep, 0o755);
+			await writeFile(
+				join(dir, ".pi/settings.json"),
+				JSON.stringify({
+					analyzer: {
+						analyzers: {
+							semgrep: { disabled: true },
+							markdownlint: { disabled: true },
+							lychee: { disabled: true },
+							slopgrep: { command: fakeSlopgrep },
+							zippy: { disabled: true },
+						},
+					},
+				}),
+			);
+
+			const result = await runAnalyzersForFile(
+				join(dir, "docs/README.md"),
+				dir,
+			);
+			assertIncludes(
+				result.analyzerIds ?? [],
+				"slopgrep",
+				"slopgrep should be reported as the analyzer that ran",
+			);
+			assertEquals(
+				result.findings.length,
+				0,
+				"Expected no slopgrep findings when nested findings are empty",
+			);
+			assert(
+				!result.error,
+				`Did not expect clean slopgrep output to be treated as an analyzer error: ${result.error ?? ""}`,
+			);
+		},
+	);
+});
+
+test("runAnalyzersForFile: slopgrep parses nested findings", async () => {
+	await withTempDir(
+		{
+			".pi": null,
+			"docs/README.md": "# Strategic Overview\n\nPlaceholder\n",
+		},
+		async (dir) => {
+			const fakeSlopgrep = join(dir, "fake-slopgrep.sh");
+			await writeFile(
+				fakeSlopgrep,
+				`#!/bin/sh
+target=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    scan) ;;
+    *) target="$arg" ;;
+  esac
+done
+cat <<EOF
+{
+  "results": [
+    {
+      "path": "$target",
+      "score": 4,
+      "findings": [
+        {
+          "path": "$target",
+          "line": 3,
+          "column": 7,
+          "severity": "info",
+          "rule_id": "ai.semantic.abstract_hype_en",
+          "message": "BM25 family match: abstraction-heavy prose (score=2.20)"
+        }
+      ]
+    }
+  ]
+}
+EOF
+`,
+			);
+			await chmod(fakeSlopgrep, 0o755);
+			await writeFile(
+				join(dir, ".pi/settings.json"),
+				JSON.stringify({
+					analyzer: {
+						analyzers: {
+							semgrep: { disabled: true },
+							markdownlint: { disabled: true },
+							lychee: { disabled: true },
+							slopgrep: { command: fakeSlopgrep },
+							zippy: { disabled: true },
+						},
+					},
+				}),
+			);
+
+			const result = await runAnalyzersForFile(
+				join(dir, "docs/README.md"),
+				dir,
+			);
+			assertEquals(result.findings.length, 1, "Expected one slopgrep finding");
+			assertEquals(
+				result.findings[0]?.source,
+				"slopgrep",
+				"Expected slopgrep finding source",
+			);
+			assertEquals(
+				result.findings[0]?.ruleId,
+				"ai.semantic.abstract_hype_en",
+				"Expected nested slopgrep rule id",
+			);
+			assertEquals(
+				result.findings[0]?.line,
+				3,
+				"Expected nested slopgrep line number",
+			);
+			assertEquals(
+				result.findings[0]?.column,
+				7,
+				"Expected nested slopgrep column number",
+			);
+		},
+	);
+});
+
 test("TreeSitterManager: extracts markdown symbols and folding ranges", async () => {
 	await withTempDir(
 		{
