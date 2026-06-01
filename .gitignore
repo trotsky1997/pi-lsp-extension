@@ -2,7 +2,10 @@ node_modules/
 package-lock.json
 .DS_Store
 *.log
+dist/
 ai-slop-report.json
 .pi
 .md
 .tmp
+# CocoIndex Code (ccc)
+/.cocoindex_code/
