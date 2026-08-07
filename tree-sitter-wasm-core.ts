@@ -1091,6 +1091,38 @@ function markdownReferenceDefinitionLocation(
 	);
 }
 
+// Resolve a relative markdown link target like "./notes/foo.md#section" to a
+// Location in the target file. Returns undefined if the file does not exist or
+// the anchor cannot be found. External (http/https) and absolute URLs are left
+// to the editor; we only jump between local documents.
+function resolveMarkdownLinkTarget(
+	sourceFilePath: string,
+	rawTarget: string,
+): Location | undefined {
+	const target = rawTarget.trim();
+	if (!target || /^https?:\/\//i.test(target) || /^[a-z][a-z0-9+.-]*:/i.test(target)) return undefined; // skip external URLs
+	const [pathPart, ...anchorParts] = target.split("#");
+	const anchor = anchorParts.join("#");
+	if (!pathPart) return undefined; // pure anchor handled elsewhere
+	const sourceDir = path.dirname(sourceFilePath);
+	const resolvedPath = path.resolve(sourceDir, decodeURIComponent(pathPart));
+	if (!fs.existsSync(resolvedPath)) return undefined;
+	const parsed = parseMarkdownFile(resolvedPath);
+	if (!parsed) {
+		// Non-markdown target (e.g. a .png) — jump to the file root.
+		return markdownLocation(resolvedPath, 0, 0, 0);
+	}
+	if (anchor) {
+		const heading = findMarkdownHeadingBySlug(parsed, anchor);
+		if (heading) return markdownHeadingLocation(parsed, heading);
+		return undefined; // anchor specified but not found
+	}
+	// No anchor: jump to the first heading or document head.
+	const firstHeading = parsed.headings.find((h) => h.level === 1) ?? parsed.headings[0];
+	if (firstHeading) return markdownHeadingLocation(parsed, firstHeading);
+	return markdownLocation(parsed.absPath, 0, 0, 0);
+}
+
 function markdownReferenceUsageLocation(
 	parsed: ParsedMarkdownFile,
 	usage: MarkdownReferenceUsage,
@@ -1771,6 +1803,13 @@ export class TreeSitterManager {
 			if (link?.target.startsWith("#")) {
 				const heading = findMarkdownHeadingBySlug(markdown, link.target);
 				return heading ? [markdownHeadingLocation(markdown, heading)] : [];
+			}
+
+			if (link?.target) {
+				// Relative document link like "./notes/foo.md" or "foo.md#section".
+				const resolved = resolveMarkdownLinkTarget(markdown.absPath, link.target);
+				if (resolved) return [resolved];
+				return [];
 			}
 
 			const usage = findMarkdownReferenceUsageAtPosition(

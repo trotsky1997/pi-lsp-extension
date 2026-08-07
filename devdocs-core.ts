@@ -59,28 +59,38 @@ export function extractDevDocsSymbolAtPosition(filePath: string, line: number, c
   return null;
 }
 
+// ponytail: docset slugs pinned to a version. devdocs slugs include the major
+// version (e.g. python~3.14, numpy~2.4); a stale slug 404s. scipy has no devdocs
+// docset at all. To stay fresh without hardcoding, load the catalog from
+// https://devdocs.io/docs/docs.json and pick the highest version per name —
+// worth doing if these pins rot.
+const PY_DOCSETS = ["python~3.14", "numpy~2.4", "pandas~3"];
+const JS_DOCSETS = ["javascript", "typescript", "node~22"];
+
 export function selectDevDocsDocsets(filePath: string): string[] {
   switch (path.extname(filePath).toLowerCase()) {
     case ".ts":
     case ".tsx":
     case ".cts":
     case ".mts":
-      return ["typescript", "javascript"];
+      return ["typescript", ...JS_DOCSETS];
     case ".js":
     case ".jsx":
     case ".cjs":
     case ".mjs":
-      return ["javascript"];
+      return JS_DOCSETS;
     case ".py":
     case ".pyi":
-      return ["python~3.14"];
+      return PY_DOCSETS;
     default:
       return [];
   }
 }
 
 function devDocsIndexUrl(docset: string): string {
-  return `https://devdocs.io/docs/${docset}/index.json`;
+  // The SPA at devdocs.io serves HTML for /<docset>/index.json. The actual
+  // index.json lives on the documents.devdocs.io CDN (app config docs_origin).
+  return `https://documents.devdocs.io/${docset}/index.json`;
 }
 
 function devDocsEntryUrl(docset: string, entry: DevDocsEntry): string {
@@ -105,6 +115,26 @@ async function loadDocsetIndex(docset: string, fetchImpl: FetchLike): Promise<De
     docsetCache.delete(docset);
     throw error;
   }
+}
+
+// Common import aliases mapped to the docset's canonical module prefix.
+// devdocs indexes full names (numpy.array), user code uses aliases (np.array).
+const DOCSET_ALIAS: Record<string, Record<string, string>> = {
+  "numpy~2.4": { np: "numpy" },
+  "numpy~2.2": { np: "numpy" },
+  "numpy~2.1": { np: "numpy" },
+  "pandas~3": { pd: "pandas" },
+  "pandas~2": { pd: "pandas" },
+};
+
+function canonicalizeSymbol(docset: string, symbol: string): string {
+  const aliases = DOCSET_ALIAS[docset];
+  if (!aliases) return symbol;
+  const dot = symbol.indexOf(".");
+  if (dot <= 0) return symbol;
+  const head = symbol.slice(0, dot);
+  const rest = symbol.slice(dot);
+  return aliases[head] ? `${aliases[head]}${rest}` : symbol;
 }
 
 function scoreDevDocsEntry(entry: DevDocsEntry, query: string): number {
@@ -153,7 +183,9 @@ export async function getDevDocsHover(
 
   for (const docset of selectDevDocsDocsets(filePath)) {
     try {
-      const entry = findBestDevDocsEntry(await loadDocsetIndex(docset, fetchImpl), symbol);
+      const entries = await loadDocsetIndex(docset, fetchImpl);
+      const candidate = canonicalizeSymbol(docset, normalizeSymbol(symbol));
+      const entry = findBestDevDocsEntry(entries, candidate);
       if (entry) return devDocsHover(docset, entry);
     } catch {
       // Ignore network and parsing failures so hover fallback stays best-effort.
