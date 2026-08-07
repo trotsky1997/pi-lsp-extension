@@ -13,8 +13,136 @@ type FetchLike = typeof fetch;
 const MAX_READ_BYTES = 64 * 1024;
 const docsetCache = new Map<string, Promise<DevDocsEntry[]>>();
 
+// A resolved docset from the catalog: its full slug (with version) plus the
+// import alias devdocs publishes for it (e.g. numpy -> "np"). alias is null
+// when the docset has none.
+interface CatalogDocset {
+  slug: string;
+  alias: string | null;
+}
+
+let catalogPromise: Promise<Map<string, CatalogDocset>> | null = null;
+
 function normalizeSymbol(value: string): string {
   return value.trim().replace(/\(\)$/, "").toLowerCase();
+}
+
+// Compare version strings as semver-ish tuples ("3.14" vs "3.9"). Numeric
+// segments compared numerically so 3.9 < 3.14 (not lexicographic where 3.9 > 3.14).
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map((n) => Number.parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+// The catalog lists every docset with its slug, version, and alias. We cache a
+// map from base name (slug without ~version) to the highest-version docset so
+// callers never hardcode versions. https://devdocs.io/docs/docs.json is the SPA
+// catalog endpoint (returns real JSON, ~360KB).
+function loadCatalog(fetchImpl: FetchLike): Promise<Map<string, CatalogDocset>> {
+  if (catalogPromise) return catalogPromise;
+  catalogPromise = (async () => {
+    const map = new Map<string, CatalogDocset>();
+    try {
+      const res = await fetchImpl("https://devdocs.io/docs/docs.json");
+      if (!res.ok) return map;
+      const list = (await res.json()) as Array<{
+        slug: string;
+        version?: string;
+        alias?: string | null;
+      }>;
+      for (const item of list) {
+        const base = item.slug.split("~")[0];
+        if (!base) continue;
+        const existing = map.get(base);
+        if (!existing || (item.version && compareVersions(item.version, existing.slug.split("~")[1] ?? "") > 0)) {
+          map.set(base, { slug: item.slug, alias: item.alias ?? null });
+        }
+      }
+    } catch {
+      // Network/catalog failure: leave empty; callers fall back to hardcoded slugs.
+    }
+    return map;
+  })();
+  catalogPromise.catch(() => { catalogPromise = null; }); // allow retry on failure
+  return catalogPromise;
+}
+
+export function resetDevDocsCache(): void {
+  docsetCache.clear();
+  catalogPromise = null;
+}
+
+// Extension -> devdocs base names whose indexes should be searched for symbols
+// in that language. The "primary" language is listed first; ecosystem libraries
+// (numpy/pandas for python, lodash for js) follow because a .py file may use
+// either. Base names resolve to the latest versioned slug via the catalog, so
+// this table never needs version pins.
+const EXTENSION_TO_DOCSETS: Record<string, string[]> = {
+  ".py": ["python", "numpy", "pandas", "scipy", "django", "flask"],
+  ".pyi": ["python", "numpy", "pandas"],
+  ".ts": ["typescript", "javascript", "node", "lodash"],
+  ".tsx": ["typescript", "javascript", "react"],
+  ".cts": ["typescript", "javascript", "node"],
+  ".mts": ["typescript", "javascript", "node"],
+  ".js": ["javascript", "node", "lodash", "jquery"],
+  ".jsx": ["javascript", "react"],
+  ".mjs": ["javascript", "node"],
+  ".cjs": ["javascript", "node"],
+  ".rs": ["rust", "std"], // rust std is part of rust docset; rust base covers it
+  ".go": ["go"],
+  ".c": ["c"],
+  ".h": ["c"],
+  ".cpp": ["cpp"],
+  ".cc": ["cpp"],
+  ".cxx": ["cpp"],
+  ".hpp": ["cpp"],
+  ".hh": ["cpp"],
+  ".rb": ["ruby"],
+  ".php": ["php"],
+  ".kt": ["kotlin"],
+  ".kts": ["kotlin"],
+  ".swift": ["swift"],
+  ".ex": ["elixir"],
+  ".exs": ["elixir"],
+  ".lua": ["lua"],
+  ".hs": ["haskell"],
+  ".sh": ["bash"],
+  ".bash": ["bash"],
+  ".zsh": ["bash"],
+  ".css": ["css"],
+  ".html": ["html"],
+  ".htm": ["html"],
+};
+
+// Hardcoded fallback slugs used only if the catalog can't be loaded (offline).
+const FALLBACK_SLUGS: Record<string, string> = {
+  python: "python~3.14", numpy: "numpy~2.4", pandas: "pandas~3",
+  typescript: "typescript", javascript: "javascript", node: "node~22",
+  lodash: "lodash~4", jquery: "jquery", react: "react",
+  rust: "rust", go: "go", c: "c", cpp: "cpp", ruby: "ruby~4.0", php: "php",
+  kotlin: "kotlin~1.9", swift: "swift", elixir: "elixir~1.20", lua: "lua~5.5",
+  haskell: "haskell~9", bash: "bash", css: "css", html: "html",
+  django: "django~6.1", flask: "flask", scipy: "scipy", std: "rust",
+};
+
+// Returns the fully-versioned slug for a base name, preferring the catalog's
+// latest version and falling back to a pinned slug if the catalog is offline.
+async function resolveDocsetSlug(base: string, fetchImpl: FetchLike): Promise<string | null> {
+  const catalog = await loadCatalog(fetchImpl);
+  const entry = catalog.get(base);
+  if (entry) return entry.slug;
+  const fallback = FALLBACK_SLUGS[base];
+  return fallback ?? null;
+}
+
+async function resolveDocsetAlias(base: string, fetchImpl: FetchLike): Promise<string | null> {
+  const catalog = await loadCatalog(fetchImpl);
+  return catalog.get(base)?.alias ?? null;
 }
 
 function readLineAtPosition(filePath: string, line: number): string | null {
@@ -41,7 +169,9 @@ export function extractDevDocsSymbolAtPosition(filePath: string, line: number, c
   const lineContent = readLineAtPosition(filePath, line);
   if (!lineContent || character < 0 || character >= lineContent.length) return null;
 
-  const chainPattern = /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*/g;
+  // Match dotted or ::-separated symbol chains (os.path.join, Vec::new,
+  // std::vec::Vec) so Rust/C++ path syntax is extracted as one symbol.
+  const chainPattern = /[A-Za-z_$][\w$]*(?:(?:\.|::)[A-Za-z_$][\w$]*)*/g;
   let match: RegExpExecArray | null;
   while ((match = chainPattern.exec(lineContent)) !== null) {
     const start = match.index;
@@ -59,32 +189,10 @@ export function extractDevDocsSymbolAtPosition(filePath: string, line: number, c
   return null;
 }
 
-// ponytail: docset slugs pinned to a version. devdocs slugs include the major
-// version (e.g. python~3.14, numpy~2.4); a stale slug 404s. scipy has no devdocs
-// docset at all. To stay fresh without hardcoding, load the catalog from
-// https://devdocs.io/docs/docs.json and pick the highest version per name —
-// worth doing if these pins rot.
-const PY_DOCSETS = ["python~3.14", "numpy~2.4", "pandas~3"];
-const JS_DOCSETS = ["javascript", "typescript", "node~22"];
-
+// Return the base names to search for a file. Async because resolving to slugs
+// is deferred to getDevDocsHover (which already needs the catalog for aliases).
 export function selectDevDocsDocsets(filePath: string): string[] {
-  switch (path.extname(filePath).toLowerCase()) {
-    case ".ts":
-    case ".tsx":
-    case ".cts":
-    case ".mts":
-      return ["typescript", ...JS_DOCSETS];
-    case ".js":
-    case ".jsx":
-    case ".cjs":
-    case ".mjs":
-      return JS_DOCSETS;
-    case ".py":
-    case ".pyi":
-      return PY_DOCSETS;
-    default:
-      return [];
-  }
+  return EXTENSION_TO_DOCSETS[path.extname(filePath).toLowerCase()] ?? [];
 }
 
 function devDocsIndexUrl(docset: string): string {
@@ -117,24 +225,17 @@ async function loadDocsetIndex(docset: string, fetchImpl: FetchLike): Promise<De
   }
 }
 
-// Common import aliases mapped to the docset's canonical module prefix.
-// devdocs indexes full names (numpy.array), user code uses aliases (np.array).
-const DOCSET_ALIAS: Record<string, Record<string, string>> = {
-  "numpy~2.4": { np: "numpy" },
-  "numpy~2.2": { np: "numpy" },
-  "numpy~2.1": { np: "numpy" },
-  "pandas~3": { pd: "pandas" },
-  "pandas~2": { pd: "pandas" },
-};
-
-function canonicalizeSymbol(docset: string, symbol: string): string {
-  const aliases = DOCSET_ALIAS[docset];
-  if (!aliases) return symbol;
+// Map an import alias to the docset's canonical module prefix using the alias
+// the catalog publishes (numpy -> "np"). When the symbol already uses the full
+// name (numpy.array) or the docset has no alias, return it unchanged.
+async function canonicalizeSymbol(base: string, symbol: string, fetchImpl: FetchLike): Promise<string> {
+  const alias = await resolveDocsetAlias(base, fetchImpl);
+  if (!alias) return symbol;
   const dot = symbol.indexOf(".");
   if (dot <= 0) return symbol;
   const head = symbol.slice(0, dot);
   const rest = symbol.slice(dot);
-  return aliases[head] ? `${aliases[head]}${rest}` : symbol;
+  return head === alias ? `${base}${rest}` : symbol;
 }
 
 function scoreDevDocsEntry(entry: DevDocsEntry, query: string): number {
@@ -181,20 +282,18 @@ export async function getDevDocsHover(
   const symbol = extractDevDocsSymbolAtPosition(filePath, line - 1, character - 1);
   if (!symbol) return null;
 
-  for (const docset of selectDevDocsDocsets(filePath)) {
+  for (const base of selectDevDocsDocsets(filePath)) {
     try {
-      const entries = await loadDocsetIndex(docset, fetchImpl);
-      const candidate = canonicalizeSymbol(docset, normalizeSymbol(symbol));
+      const slug = await resolveDocsetSlug(base, fetchImpl);
+      if (!slug) continue;
+      const entries = await loadDocsetIndex(slug, fetchImpl);
+      const candidate = await canonicalizeSymbol(base, symbol, fetchImpl);
       const entry = findBestDevDocsEntry(entries, candidate);
-      if (entry) return devDocsHover(docset, entry);
+      if (entry) return devDocsHover(slug, entry);
     } catch {
       // Ignore network and parsing failures so hover fallback stays best-effort.
     }
   }
 
   return null;
-}
-
-export function resetDevDocsCache(): void {
-  docsetCache.clear();
 }
