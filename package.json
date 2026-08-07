@@ -37,7 +37,8 @@
   "pi": {
     "extensions": [
       "./lsp.ts",
-      "./lsp-tool.ts"
+      "./lsp-tool.ts",
+      "./ast-grep-tool.ts"
     ],
     "skills": [
       "./skills"
