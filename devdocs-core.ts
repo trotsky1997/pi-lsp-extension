@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Hover } from "vscode-languageserver-protocol";
+import { detectLanguage } from "./language-detect.js";
 
 interface DevDocsEntry {
   name: string;
@@ -77,47 +78,40 @@ export function resetDevDocsCache(): void {
   catalogPromise = null;
 }
 
-// Extension -> devdocs base names whose indexes should be searched for symbols
-// in that language. The "primary" language is listed first; ecosystem libraries
-// (numpy/pandas for python, lodash for js) follow because a .py file may use
-// either. Base names resolve to the latest versioned slug via the catalog, so
-// this table never needs version pins.
-const EXTENSION_TO_DOCSETS: Record<string, string[]> = {
-  ".py": ["python", "numpy", "pandas", "scipy", "django", "flask"],
-  ".pyi": ["python", "numpy", "pandas"],
-  ".ts": ["typescript", "javascript", "node", "lodash"],
-  ".tsx": ["typescript", "javascript", "react"],
-  ".cts": ["typescript", "javascript", "node"],
-  ".mts": ["typescript", "javascript", "node"],
-  ".js": ["javascript", "node", "lodash", "jquery"],
-  ".jsx": ["javascript", "react"],
-  ".mjs": ["javascript", "node"],
-  ".cjs": ["javascript", "node"],
-  ".rs": ["rust", "std"], // rust std is part of rust docset; rust base covers it
-  ".go": ["go"],
-  ".c": ["c"],
-  ".h": ["c"],
-  ".cpp": ["cpp"],
-  ".cc": ["cpp"],
-  ".cxx": ["cpp"],
-  ".hpp": ["cpp"],
-  ".hh": ["cpp"],
-  ".rb": ["ruby"],
-  ".php": ["php"],
-  ".kt": ["kotlin"],
-  ".kts": ["kotlin"],
-  ".swift": ["swift"],
-  ".ex": ["elixir"],
-  ".exs": ["elixir"],
-  ".lua": ["lua"],
-  ".hs": ["haskell"],
-  ".sh": ["bash"],
-  ".bash": ["bash"],
-  ".zsh": ["bash"],
-  ".css": ["css"],
-  ".html": ["html"],
-  ".htm": ["html"],
+// Map a detected language name (from linguist via language-detect) to the
+// devdocs base names whose indexes should be searched. The primary language
+// is first; ecosystem libraries (numpy/pandas for python, lodash for js) follow
+// since one file may use either. Base names resolve to the latest versioned
+// slug via the catalog, so this table never needs version pins.
+const LANGUAGE_TO_DOCSETS: Record<string, string[]> = {
+  python: ["python", "numpy", "pandas", "scipy", "django", "flask"],
+  typescript: ["typescript", "javascript", "node", "lodash"],
+  javascript: ["javascript", "node", "lodash", "jquery"],
+  rust: ["rust"],
+  go: ["go"],
+  c: ["c"],
+  cpp: ["cpp"],
+  ruby: ["ruby"],
+  php: ["php"],
+  kotlin: ["kotlin"],
+  swift: ["swift"],
+  elixir: ["elixir"],
+  lua: ["lua"],
+  haskell: ["haskell"],
+  shell: ["bash"],
+  bash: ["bash"],
+  css: ["css"],
+  html: ["html"],
 };
+
+// Detect the file's language (via linguist: extension + shebang + content
+// heuristics) and return the devdocs base names to search. Async because
+// linguist analyseRawContent is async.
+export async function selectDevDocsDocsets(filePath: string, content?: string): Promise<string[]> {
+  const lang = await detectLanguage(filePath, content);
+  if (!lang) return [];
+  return LANGUAGE_TO_DOCSETS[lang] ?? [];
+}
 
 // Hardcoded fallback slugs used only if the catalog can't be loaded (offline).
 const FALLBACK_SLUGS: Record<string, string> = {
@@ -127,7 +121,7 @@ const FALLBACK_SLUGS: Record<string, string> = {
   rust: "rust", go: "go", c: "c", cpp: "cpp", ruby: "ruby~4.0", php: "php",
   kotlin: "kotlin~1.9", swift: "swift", elixir: "elixir~1.20", lua: "lua~5.5",
   haskell: "haskell~9", bash: "bash", css: "css", html: "html",
-  django: "django~6.1", flask: "flask", scipy: "scipy", std: "rust",
+  django: "django~6.1", flask: "flask", scipy: "scipy",
 };
 
 // Returns the fully-versioned slug for a base name, preferring the catalog's
@@ -187,12 +181,6 @@ export function extractDevDocsSymbolAtPosition(filePath: string, line: number, c
   }
 
   return null;
-}
-
-// Return the base names to search for a file. Async because resolving to slugs
-// is deferred to getDevDocsHover (which already needs the catalog for aliases).
-export function selectDevDocsDocsets(filePath: string): string[] {
-  return EXTENSION_TO_DOCSETS[path.extname(filePath).toLowerCase()] ?? [];
 }
 
 function devDocsIndexUrl(docset: string): string {
@@ -282,7 +270,7 @@ export async function getDevDocsHover(
   const symbol = extractDevDocsSymbolAtPosition(filePath, line - 1, character - 1);
   if (!symbol) return null;
 
-  for (const base of selectDevDocsDocsets(filePath)) {
+  for (const base of await selectDevDocsDocsets(filePath)) {
     try {
       const slug = await resolveDocsetSlug(base, fetchImpl);
       if (!slug) continue;
