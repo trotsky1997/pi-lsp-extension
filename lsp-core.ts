@@ -146,10 +146,19 @@ const SEARCH_PATHS = [
 ];
 
 function which(cmd: string): string | undefined {
-  const ext = process.platform === "win32" ? ".exe" : "";
+  // ponytail: Windows npm shims ship as .cmd/.ps1 (no .exe); PATHEXT covers them.
+  // PATHEXT entries first (spawnable), bare name last (unix shims, only run via shell).
+  const exts = process.platform === "win32"
+    ? [...(process.env.PATHEXT?.split(";") ?? [".EXE", ".CMD", ".BAT"]), ""]
+    : [""];
   for (const dir of SEARCH_PATHS) {
-    const full = path.join(dir, cmd + ext);
-    try { if (fs.existsSync(full) && fs.statSync(full).isFile()) return full; } catch {}
+    for (const ext of exts) {
+      const full = path.join(dir, cmd + ext);
+      try { if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+        // ponytail: bun spawn rejects .cmd with backslash paths on Windows; forward slashes work.
+        return process.platform === "win32" ? full.replace(/\\/g, "/") : full;
+      } } catch {}
+    }
   }
 }
 
@@ -305,7 +314,7 @@ function simpleSpawn(bin: string, args: string[] = ["--stdio"]) {
 
 function localNodeCommand(root: string, binaryName: string): string | undefined {
   const local = path.join(root, "node_modules/.bin", binaryName);
-  if (fs.existsSync(local)) return local;
+  if (fs.existsSync(local)) return process.platform === "win32" ? local.replace(/\\/g, "/") : local;
   return which(binaryName);
 }
 

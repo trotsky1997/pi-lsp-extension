@@ -50,7 +50,6 @@ import {
 	type Operation,
 } from "./lsp-tool-schemas.js";
 import { getSymbolAtPosition } from "./lsp-tool-symbol-context.js";
-import { tryExecuteOpenLspFromPi } from "./openlsp-pi-adapter.js";
 
 const PREVIEW_LINES = 10;
 const MAX_LSP_FILE_SIZE_BYTES = 10_000_000;
@@ -788,12 +787,6 @@ Extras: diagnostics, workspaceDiagnostics, signatureHelp, rename, prepareRename,
 			if (signal?.aborted) return cancelledToolResult();
 
 			const params = parseLspToolInput(rawParams);
-			const bridged = await tryExecuteOpenLspFromPi(
-				params as unknown as Record<string, unknown>,
-				ctx.cwd,
-			);
-			if (bridged) return buildResult(bridged.text, bridged.details);
-
 			const manager = getOrCreateManager(ctx.cwd);
 			const severity: SeverityFilter =
 				"severity" in params ? (params.severity ?? "all") : "all";
