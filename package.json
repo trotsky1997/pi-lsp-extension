@@ -1,6 +1,6 @@
 {
   "name": "lsp-pi",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "LSP and formatter extension for pi-coding-agent with config-first language server, diagnostics, and format-on-write support",
   "scripts": {
     "test": "npx tsx tests/lsp.test.ts",
@@ -46,18 +46,18 @@
   "dependencies": {
     "@sinclair/typebox": "^0.34.33",
     "@vscode/tree-sitter-wasm": "^0.3.1",
-    "vscode-languageserver-protocol": "^3.17.5",
+    "vscode-languageserver-protocol": "~3.17.5",
     "zod": "^4.1.12"
   },
   "peerDependencies": {
-    "@mariozechner/pi-ai": "^0.50.0",
-    "@mariozechner/pi-coding-agent": "^0.50.0",
-    "@mariozechner/pi-tui": "^0.50.0"
+    "@mariozechner/pi-ai": "^0.66.0",
+    "@mariozechner/pi-coding-agent": "^0.66.0",
+    "@mariozechner/pi-tui": "^0.66.0"
   },
   "devDependencies": {
-    "@mariozechner/pi-ai": "^0.50.0",
-    "@mariozechner/pi-coding-agent": "^0.50.0",
-    "@mariozechner/pi-tui": "^0.50.0",
+    "@mariozechner/pi-ai": "^0.66.0",
+    "@mariozechner/pi-coding-agent": "^0.66.0",
+    "@mariozechner/pi-tui": "^0.66.0",
     "@types/node": "^24.10.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"

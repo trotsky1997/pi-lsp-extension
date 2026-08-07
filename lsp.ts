@@ -1005,17 +1005,9 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  pi.on("session_switch", async (_event, ctx) => {
-    restoreHookState(ctx);
-    updateLspStatus();
-  });
-
+  // ponytail: pi 0.66 dropped session_switch/session_fork; session_start now
+  // fires with reason "resume"/"new"/"fork" and already restores hook state.
   pi.on("session_tree", async (_event, ctx) => {
-    restoreHookState(ctx);
-    updateLspStatus();
-  });
-
-  pi.on("session_fork", async (_event, ctx) => {
     restoreHookState(ctx);
     updateLspStatus();
   });
