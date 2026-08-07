@@ -50,7 +50,16 @@ type SupportedLanguageId =
 	| "regex"
 	| "ruby"
 	| "rust"
-	| "markdown";
+	| "markdown"
+	| "json"
+	| "elixir"
+	| "html"
+	| "kotlin"
+	| "lua"
+	| "scala"
+	| "solidity"
+	| "swift"
+	| "yaml";
 
 type TagRole = "definition" | "reference";
 
@@ -230,12 +239,72 @@ const BUNDLED_LANGUAGE_SPECS: LanguageSpec[] = [
 		tagsQueryPath: path.join(QUERY_ROOT, "typescript", "tags.scm"),
 		localsQueryPath: path.join(QUERY_ROOT, "typescript", "locals.scm"),
 	},
+	{
+		id: "json",
+		extensions: [".json", ".jsonc"],
+		wasmFile: path.join(LOCAL_WASM_DIR, "tree-sitter-json.wasm"),
+		tagsQueryPath: path.join(QUERY_ROOT, "json", "tags.scm"),
+	},
+	{
+		id: "elixir",
+		extensions: [".ex", ".exs"],
+		wasmFile: path.join(LOCAL_WASM_DIR, "tree-sitter-elixir.wasm"),
+		tagsQueryPath: path.join(QUERY_ROOT, "elixir", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "elixir", "locals.scm"),
+	},
+	{
+		id: "html",
+		extensions: [".html", ".htm", ".xhtml"],
+		wasmFile: path.join(LOCAL_WASM_DIR, "tree-sitter-html.wasm"),
+		tagsQueryPath: path.join(QUERY_ROOT, "html", "tags.scm"),
+	},
+	{
+		id: "kotlin",
+		extensions: [".kt", ".ktm", ".kts"],
+		wasmFile: path.join(LOCAL_WASM_DIR, "tree-sitter-kotlin.wasm"),
+		tagsQueryPath: path.join(QUERY_ROOT, "kotlin", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "kotlin", "locals.scm"),
+	},
+	{
+		id: "lua",
+		extensions: [".lua"],
+		wasmFile: path.join(LOCAL_WASM_DIR, "tree-sitter-lua.wasm"),
+		tagsQueryPath: path.join(QUERY_ROOT, "lua", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "lua", "locals.scm"),
+	},
+	{
+		id: "scala",
+		extensions: [".scala", ".sc", ".sbt"],
+		wasmFile: path.join(LOCAL_WASM_DIR, "tree-sitter-scala.wasm"),
+		tagsQueryPath: path.join(QUERY_ROOT, "scala", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "scala", "locals.scm"),
+	},
+	{
+		id: "solidity",
+		extensions: [".sol"],
+		wasmFile: path.join(LOCAL_WASM_DIR, "tree-sitter-solidity.wasm"),
+		tagsQueryPath: path.join(QUERY_ROOT, "solidity", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "solidity", "locals.scm"),
+	},
+	{
+		id: "swift",
+		extensions: [".swift"],
+		wasmFile: path.join(LOCAL_WASM_DIR, "tree-sitter-swift.wasm"),
+		tagsQueryPath: path.join(QUERY_ROOT, "swift", "tags.scm"),
+		localsQueryPath: path.join(QUERY_ROOT, "swift", "locals.scm"),
+	},
+	{
+		id: "yaml",
+		extensions: [".yaml", ".yml"],
+		wasmFile: path.join(LOCAL_WASM_DIR, "tree-sitter-yaml.wasm"),
+		tagsQueryPath: path.join(QUERY_ROOT, "yaml", "tags.scm"),
+	},
 ];
 
 const bundledLanguages = await Promise.all(
 	BUNDLED_LANGUAGE_SPECS.map(async (spec) => ({
 		...spec,
-		language: await Language.load(path.join(TREE_SITTER_WASM_DIR, spec.wasmFile)),
+		language: await Language.load(path.isAbsolute(spec.wasmFile) ? spec.wasmFile : path.join(TREE_SITTER_WASM_DIR, spec.wasmFile)),
 	})),
 );
 
@@ -1274,7 +1343,7 @@ export class TreeSitterManager {
 	supportsOperation(filePath: string, operation: string): boolean {
 		if (isMarkdownFile(filePath)) return markdownSupportsOperation(operation);
 		const config = getLanguageConfig(filePath);
-		if (!config) return false;
+		if (!config || !config.language) return false;
 		return SUPPORTED_OPERATIONS.has(operation as TreeSitterOperation);
 	}
 
