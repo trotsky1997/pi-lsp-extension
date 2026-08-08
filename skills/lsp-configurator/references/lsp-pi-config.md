@@ -193,3 +193,44 @@ ecosystem, see `docs/language-config-examples.md`.
   }
 }
 ```
+
+## DAP debug adapters
+
+Debug adapters are configured in `dap.json` (not `.pi/settings.json`):
+- `~/.pi/dap.json` (user)
+- `.pi/dap.json` (project, walked up from cwd)
+
+### Built-in adapter IDs (from `dap/defaults.json`)
+
+- `gdb` — C, C++, Rust (`gdb -i dap`)
+- `lldb-dap` — C, C++, ObjC, Swift, Rust, Zig
+- `codelldb` — C, C++, Rust, Zig (`codelldb --port 0`)
+- `debugpy` — Python (`python -m debugpy.adapter`)
+- `dlv` — Go (`dlv dap`)
+- `js-debug-adapter` — JavaScript, TypeScript
+- `netcoredbg` — C#, F# (`netcoredbg --interpreter=vscode`)
+- `rdbg` — Ruby (`rdbg --open --command --`)
+- `dart-debug-adapter` — Dart
+- `flutter-debug-adapter` — Dart (Flutter)
+- `kotlin-debug-adapter` — Kotlin
+- `php-debug-adapter` — PHP
+- `bash-debug-adapter` — Bash, Shell
+- `elixir-ls-debugger` — Elixir
+
+### DAP adapter override
+
+```json
+{
+  "adapters": {
+    "debugpy": {
+      "command": "python3.12",
+      "args": ["-m", "debugpy.adapter"],
+      "languages": ["python"],
+      "fileTypes": [".py"],
+      "rootMarkers": ["pyproject.toml", "setup.py"],
+      "launchDefaults": { "request": "launch", "justMyCode": false, "stopOnEntry": true },
+      "attachDefaults": { "request": "attach", "justMyCode": false }
+    }
+  }
+}
+```
