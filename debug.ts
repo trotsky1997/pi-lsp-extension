@@ -54,6 +54,7 @@ const ACTIONS = [
 	"launch",
 	"attach",
 	"set_breakpoint",
+	"set_function_breakpoint",
 	"remove_breakpoint",
 	"set_instruction_breakpoint",
 	"remove_instruction_breakpoint",
@@ -102,6 +103,7 @@ const debugSchema = Type.Object({
 	name: Type.Optional(Type.String()),
 	condition: Type.Optional(Type.String({ description: "breakpoint condition" })),
 	hit_condition: Type.Optional(Type.String()),
+	log_message: Type.Optional(Type.String({ description: "log breakpoint message (no stop)" })),
 	expression: Type.Optional(Type.String()),
 	context: Type.Optional(Type.String({ description: "evaluate context: watch | repl | hover | variables | clipboard" })),
 	frame_id: Type.Optional(Type.Number()),
@@ -193,7 +195,7 @@ function formatBreakpoints(filePath: string, breakpoints: DapBreakpointRecord[])
 		return lines.join("\n");
 	}
 	for (const bp of breakpoints) {
-		lines.push(`- line ${bp.line}: ${bp.verified ? "verified" : "pending"}${bp.condition ? ` if ${bp.condition}` : ""}${bp.message ? ` (${bp.message})` : ""}`);
+		lines.push(`- line ${bp.line}: ${bp.verified ? "verified" : "pending"}${bp.condition ? ` if ${bp.condition}` : ""}${bp.hitCondition ? ` after ${bp.hitCondition}` : ""}${bp.logMessage ? ` log ${bp.logMessage}` : ""}${bp.message ? ` (${bp.message})` : ""}`);
 	}
 	return lines.join("\n");
 }
@@ -205,7 +207,7 @@ function formatFunctionBreakpoints(breakpoints: DapFunctionBreakpointRecord[]): 
 		return lines.join("\n");
 	}
 	for (const bp of breakpoints) {
-		lines.push(`- ${bp.name}: ${bp.verified ? "verified" : "pending"}${bp.condition ? ` if ${bp.condition}` : ""}${bp.message ? ` (${bp.message})` : ""}`);
+		lines.push(`- ${bp.name}: ${bp.verified ? "verified" : "pending"}${bp.condition ? ` if ${bp.condition}` : ""}${bp.hitCondition ? ` after ${bp.hitCondition}` : ""}${bp.message ? ` (${bp.message})` : ""}`);
 	}
 	return lines.join("\n");
 }
@@ -543,10 +545,17 @@ export default function (pi: ExtensionAPI) {
 			case "set_breakpoint": {
 				if (!params.file || params.line === undefined) throw new Error("set_breakpoint requires file and line");
 				const file = path.resolve(cwd, params.file);
-				const response = await getDapSessionManager().setBreakpoint(file, params.line, params.condition, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().setBreakpoint(file, params.line, params.condition, params.hit_condition, params.log_message, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.breakpoints = response.breakpoints;
 				return text(formatBreakpoints(response.sourcePath, response.breakpoints));
+			}
+			case "set_function_breakpoint": {
+				if (!params.function) throw new Error("set_function_breakpoint requires function");
+				const response = await getDapSessionManager().setFunctionBreakpoint(params.function, params.condition, params.hit_condition, combinedSignal, timeoutSec * 1000);
+				details.snapshot = response.snapshot;
+				details.functionBreakpoints = response.breakpoints;
+				return text(formatFunctionBreakpoints(response.breakpoints));
 			}
 			case "remove_breakpoint": {
 				if (params.function) {

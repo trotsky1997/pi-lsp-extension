@@ -496,6 +496,8 @@ export class DapSessionManager {
 		file: string,
 		line: number,
 		condition?: string,
+		hitCondition?: string,
+		logMessage?: string,
 		signal?: AbortSignal,
 		timeoutMs: number = 30_000,
 	) {
@@ -503,13 +505,15 @@ export class DapSessionManager {
 		const sourcePath = normalizePath(file);
 		const root = this.#getRootSession(session);
 		const current = [...(root.breakpoints.get(sourcePath) ?? [])].filter(entry => entry.line !== line);
-		current.push({ verified: false, line, condition });
+		current.push({ verified: false, line, condition, hitCondition, logMessage });
 		current.sort((left, right) => left.line - right.line);
 		const args = {
 			source: { path: sourcePath, name: path.basename(sourcePath) },
 			breakpoints: current.map<DapSourceBreakpoint>(entry => ({
 				line: entry.line,
 				...(entry.condition ? { condition: entry.condition } : {}),
+				...(entry.hitCondition ? { hitCondition: entry.hitCondition } : {}),
+				...(entry.logMessage ? { logMessage: entry.logMessage } : {}),
 			})),
 		};
 		await this.#syncBreakpointTree(
@@ -571,15 +575,16 @@ export class DapSessionManager {
 		};
 	}
 
-	async setFunctionBreakpoint(name: string, condition?: string, signal?: AbortSignal, timeoutMs: number = 30_000) {
+	async setFunctionBreakpoint(name: string, condition?: string, hitCondition?: string, signal?: AbortSignal, timeoutMs: number = 30_000) {
 		const session = this.#touchActiveSession();
 		const current = this.#getRootSession(session).functionBreakpoints.filter(entry => entry.name !== name);
-		current.push({ verified: false, name, condition });
+		current.push({ verified: false, name, condition, hitCondition });
 		current.sort((left, right) => left.name.localeCompare(right.name));
 		const args = {
 			breakpoints: current.map<DapFunctionBreakpoint>(entry => ({
 				name: entry.name,
 				...(entry.condition ? { condition: entry.condition } : {}),
+				...(entry.hitCondition ? { hitCondition: entry.hitCondition } : {}),
 			})),
 		};
 		await this.#syncBreakpointTree(
@@ -605,6 +610,7 @@ export class DapSessionManager {
 			breakpoints: current.map<DapFunctionBreakpoint>(entry => ({
 				name: entry.name,
 				...(entry.condition ? { condition: entry.condition } : {}),
+				...(entry.hitCondition ? { hitCondition: entry.hitCondition } : {}),
 			})),
 		};
 		await this.#syncBreakpointTree(
@@ -1222,6 +1228,8 @@ export class DapSessionManager {
 						breakpoints: entries.map<DapSourceBreakpoint>(entry => ({
 							line: entry.line,
 							...(entry.condition ? { condition: entry.condition } : {}),
+							...(entry.hitCondition ? { hitCondition: entry.hitCondition } : {}),
+							...(entry.logMessage ? { logMessage: entry.logMessage } : {}),
 						})),
 					},
 					signal,
@@ -1244,6 +1252,7 @@ export class DapSessionManager {
 						breakpoints: root.functionBreakpoints.map<DapFunctionBreakpoint>(entry => ({
 							name: entry.name,
 							...(entry.condition ? { condition: entry.condition } : {}),
+							...(entry.hitCondition ? { hitCondition: entry.hitCondition } : {}),
 						})),
 					},
 					signal,
@@ -1664,8 +1673,7 @@ export class DapSessionManager {
 		responseBreakpoints: DapBreakpoint[] | undefined,
 	): DapBreakpointRecord[] {
 		return input.map((entry, index) => ({
-			line: entry.line,
-			condition: entry.condition,
+			...entry,
 			id: responseBreakpoints?.[index]?.id,
 			verified: responseBreakpoints?.[index]?.verified ?? false,
 			message: responseBreakpoints?.[index]?.message,
@@ -1677,8 +1685,7 @@ export class DapSessionManager {
 		responseBreakpoints: DapBreakpoint[] | undefined,
 	): DapFunctionBreakpointRecord[] {
 		return input.map((entry, index) => ({
-			name: entry.name,
-			condition: entry.condition,
+			...entry,
 			id: responseBreakpoints?.[index]?.id,
 			verified: responseBreakpoints?.[index]?.verified ?? false,
 			message: responseBreakpoints?.[index]?.message,

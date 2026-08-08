@@ -512,6 +512,8 @@ export interface DapBreakpointRecord {
 	verified: boolean;
 	line: number;
 	condition?: string;
+	hitCondition?: string;
+	logMessage?: string;
 	message?: string;
 }
 
@@ -540,6 +542,7 @@ export interface DapFunctionBreakpointRecord {
 	verified: boolean;
 	name: string;
 	condition?: string;
+	hitCondition?: string;
 	message?: string;
 }
 
