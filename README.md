@@ -2,11 +2,12 @@
 
 Config-first code intelligence for `pi-coding-agent`.
 
-`lsp-pi` combines three layers:
+`lsp-pi` combines four layers:
 
 - `lsp` for language servers and editor-style code intelligence
 - `formatter` for format-on-write tools
 - `analyzer` for non-LSP diagnostics such as `semgrep`, `ruff-check`, `shellcheck`, and `lychee`
+- `debug` for driving a real debugger (lldb-dap, gdb, dlv, debugpy, …) via DAP — launch, breakpoints, stepping, variable/memory inspection
 
 It also ships a reusable setup skill at `skills/lsp-configurator/` for interactive configuration.
 
@@ -19,6 +20,7 @@ It also ships a reusable setup skill at `skills/lsp-configurator/` for interacti
 - `/lsp` status output and `/lsp doctor` workspace diagnostics
 - bundled `lsp-configurator` skill for guided setup
 - **`debug` tool** — drives a real debugger (lldb-dap, gdb, dlv, debugpy, codelldb, rdbg, …) via the Debug Adapter Protocol. Launch/attach, set breakpoints, step, inspect stack/variables/memory, evaluate expressions. Sessions persist across calls.
+- **lsp → debug bridge** — `lsp setBreakpoint` resolves a symbol's definition via LSP, then sets a DAP breakpoint at the resolved location. One step: point at a function call, get a breakpoint at its definition.
 
 ## Quick start
 
@@ -50,7 +52,9 @@ Create a project config:
 }
 ```
 
-Then install the binaries you actually want to use. `lsp-pi` does not auto-install language servers, formatters, or analyzers.
+Then install the binaries you actually want to use. `lsp-pi` does not auto-install language servers, formatters, analyzers, or debug adapters.
+
+For debugging, just install the relevant debugger (`lldb-dap`, `gdb`, `python -m pip install debugpy`, `dlv`, etc.) — the `debug` tool is available out of the box, no config needed.
 
 ## Bundled skill
 
@@ -358,14 +362,31 @@ point is `debug.ts`.
 
 Sessions persist across tool calls — launch once, then step and inspect.
 
-**Adapter configuration**: built-in adapters are in `dap/defaults.json` (gdb,
-lldb-dap, codelldb, debugpy, dlv, js-debug-adapter, netcoredbg, rdbg, etc).
-Override via `dap.json` / `.dap.json` / `dap.yaml` in:
+**Adapter configuration**: built-in adapters are in `dap/defaults.json`. Override via `dap.json` / `.dap.json` / `dap.yaml` in:
 - `~/.pi/` (user)
 - `.pi/` (project, walked up from cwd)
 
 The adapter binary must be installed and on PATH. `lsp-pi` does not auto-install
 debuggers.
+
+### Built-in adapters
+
+| Adapter | Languages | Command |
+|---------|----------|---------|
+| `gdb` | C, C++, Rust | `gdb -i dap` |
+| `lldb-dap` | C, C++, ObjC, Swift, Rust, Zig | `lldb-dap` |
+| `codelldb` | C, C++, Rust, Zig | `codelldb --port 0` |
+| `debugpy` | Python | `python -m debugpy.adapter` |
+| `dlv` | Go | `dlv dap` |
+| `js-debug-adapter` | JavaScript, TypeScript | `js-debug-adapter` |
+| `netcoredbg` | C#, F# | `netcoredbg --interpreter=vscode` |
+| `rdbg` | Ruby | `rdbg --open --command --` |
+| `dart-debug-adapter` | Dart | `dart debug_adapter` |
+| `flutter-debug-adapter` | Dart (Flutter) | `dart debug_adapter --flutter-sdk-path` |
+| `kotlin-debug-adapter` | Kotlin | `kotlin-debug-adapter` |
+| `php-debug-adapter` | PHP | `php-debug-adapter` |
+| `bash-debug-adapter` | Bash, Shell | `bash-debug-adapter` |
+| `elixir-ls-debugger` | Elixir | `elixir-ls-debugger` |
 
 ### Example: debugging a segfault
 
@@ -389,6 +410,53 @@ debug action=scopes
 debug action=variables
 debug action=evaluate expression=x
 debug action=terminate
+```
+
+### Example: lsp → debug bridge (setBreakpoint)
+
+The `lsp` tool has a `setBreakpoint` operation that bridges LSP and DAP:
+it resolves a symbol's definition via `goToDefinition`, then sets a DAP
+breakpoint at the resolved location. Requires an active debug session.
+
+```
+debug action=launch program=./app.py adapter=debugpy
+lsp  operation=setBreakpoint filePath=./app.py line=20 character=5
+debug action=continue
+debug action=stack_trace
+debug action=terminate
+```
+
+This sets a breakpoint at the definition of the symbol under the cursor —
+useful when you know *where you're calling from* but not *where it's defined*.
+For plain line breakpoints, use `debug set_breakpoint` directly.
+
+### Example: attaching to a running process
+
+```
+debug action=attach pid=12345 adapter=gdb
+debug action=threads
+debug action=stack_trace
+debug action=variables
+debug action=terminate
+```
+
+### Adapter override (non-default Python)
+
+If the default `python` command points to an incompatible version (e.g.
+debugpy 1.8.x does not support Python 3.14+), override it in `dap.json`:
+
+```json
+{
+  "adapters": {
+    "debugpy": {
+      "command": "python3.12",
+      "args": ["-m", "debugpy.adapter"],
+      "languages": ["python"],
+      "fileTypes": [".py"],
+      "launchDefaults": { "request": "launch", "stopOnEntry": true }
+    }
+  }
+}
 ```
 
 ### Example config
