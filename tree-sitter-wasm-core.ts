@@ -338,6 +338,7 @@ if (markdownLanguage) {
 const SUPPORTED_OPERATIONS = new Set<TreeSitterOperation>([
 	"diagnostics",
 	"goToDefinition",
+	"setBreakpoint",
 	"findReferences",
 	"hover",
 	"documentSymbol",

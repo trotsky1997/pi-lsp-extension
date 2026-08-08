@@ -1837,4 +1837,19 @@ export class DapSessionManager {
 	}
 }
 
-export const dapSessionManager = new DapSessionManager();
+// Shared singleton: pi's jiti loader (moduleCache:false, separate jiti per
+// extension entry point) creates distinct module instances per entry. Both
+// debug.ts and lsp-tool.ts import this, but they must see the same manager or
+// breakpoints set from lsp won't reach the session debug launched. Use a
+// globalThis key so all jiti instances share one DapSessionManager.
+const DAP_SESSION_MANAGER_KEY = Symbol.for("pi-lsp-extension.dapSessionManager");
+
+export function getDapSessionManager(): DapSessionManager {
+	const g = globalThis as unknown as { [DAP_SESSION_MANAGER_KEY]?: DapSessionManager };
+	if (!g[DAP_SESSION_MANAGER_KEY]) {
+		g[DAP_SESSION_MANAGER_KEY] = new DapSessionManager();
+	}
+	return g[DAP_SESSION_MANAGER_KEY]!;
+}
+
+export const dapSessionManager = getDapSessionManager();

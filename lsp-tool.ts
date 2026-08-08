@@ -50,6 +50,7 @@ import {
 	type Operation,
 } from "./lsp-tool-schemas.js";
 import { getSymbolAtPosition } from "./lsp-tool-symbol-context.js";
+import { getDapSessionManager } from "./dap/_engine.js";
 
 const PREVIEW_LINES = 10;
 const MAX_LSP_FILE_SIZE_BYTES = 10_000_000;
@@ -769,7 +770,7 @@ export default function (pi: ExtensionAPI) {
 		description: `Claude-style LSP queries for definitions, references, hover, highlights, symbols, implementations, call hierarchy, and preserved Pi extras.
 
 Core operations: goToDefinition, findReferences, hover, documentHighlight, documentSymbol, workspaceSymbol, goToImplementation, typeDefinition, prepareCallHierarchy, incomingCalls, outgoingCalls.
-Extras: diagnostics, workspaceDiagnostics, signatureHelp, rename, prepareRename, foldingRange, codeAction.`,
+Extras: diagnostics, workspaceDiagnostics, signatureHelp, rename, prepareRename, foldingRange, codeAction, setBreakpoint (resolves symbol definition via LSP, then sets a DAP breakpoint — requires an active debug session).`,
 		parameters: LspParams,
 
 		async execute(
@@ -917,6 +918,47 @@ Extras: diagnostics, workspaceDiagnostics, signatureHelp, rename, prepareRename,
 
 						let result: unknown;
 						switch (params.operation) {
+							case "setBreakpoint": {
+								const defResult = await abortable(
+									manager.getDefinition(
+										params.filePath!,
+										params.line!,
+										params.character!,
+									),
+									signal,
+								);
+								const rawItems = Array.isArray(defResult) ? defResult : defResult ? [defResult] : [];
+								const locations = rawItems.map(toLocation).filter(loc => Boolean(loc?.uri));
+								if (locations.length === 0) {
+									return buildResult(
+										`No definition found for breakpoint — cannot resolve symbol at ${params.filePath}:${params.line}:${params.character}.`,
+										{ operation: "setBreakpoint", filePath: params.filePath, resultCount: 0 },
+									);
+								}
+								const loc = locations[0]!;
+								const bpFile = loc.uri.replace(/^file:\/\//, "").replace(/^\/[A-Za-z]:/, m => m.slice(1));
+								const bpLine = loc.range.start.line + 1; // LSP 0-based → DAP 1-based
+								try {
+									const bpResult = await getDapSessionManager().setBreakpoint(
+										decodeURIComponent(bpFile),
+										bpLine,
+										undefined,
+										signal,
+										10_000,
+									);
+									const bp = bpResult.breakpoints[0];
+									return buildResult(
+										`Breakpoint set via LSP definition: ${bpFile}:${bpLine} — ${bp?.verified ? "verified" : "pending"}${bp?.message ? ` (${bp.message})` : ""}`,
+										{ operation: "setBreakpoint", filePath: params.filePath, resultCount: 1, backend },
+									);
+								} catch (error) {
+										const msg = error instanceof Error ? error.message : String(error);
+										return buildResult(
+											`LSP resolved definition at ${bpFile}:${bpLine} but DAP setBreakpoint failed: ${msg}. Is a debug session active?`,
+											{ operation: "setBreakpoint", filePath: params.filePath, resultCount: 0, backend },
+										);
+								}
+							}
 							case "goToDefinition":
 								result = await abortable(
 									manager.getDefinition(

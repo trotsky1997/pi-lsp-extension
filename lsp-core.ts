@@ -932,7 +932,7 @@ export class LSPManager {
     const capabilities = client.capabilities ?? {};
 
     switch (operation) {
-      case "goToDefinition": return Boolean(capabilities.definitionProvider);
+      case "setBreakpoint": return Boolean(capabilities.definitionProvider);
       case "findReferences": return Boolean(capabilities.referencesProvider);
       case "hover": return Boolean(capabilities.hoverProvider);
       case "documentSymbol": return Boolean(capabilities.documentSymbolProvider);

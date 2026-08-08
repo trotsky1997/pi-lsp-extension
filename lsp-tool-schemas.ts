@@ -19,6 +19,7 @@ export const OPERATIONS = [
   "prepareRename",
   "foldingRange",
   "codeAction",
+  "setBreakpoint",
 ] as const;
 
 export const SEVERITY_FILTERS = ["all", "error", "warning", "info", "hint"] as const;
@@ -53,6 +54,7 @@ const claudeCoreOperationSchema = z.strictObject({
     "prepareCallHierarchy",
     "incomingCalls",
     "outgoingCalls",
+    "setBreakpoint",
   ]),
   filePath: filePathField,
   ...positionSchema,

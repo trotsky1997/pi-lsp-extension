@@ -21,7 +21,7 @@ import { Type } from "@sinclair/typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
-	dapSessionManager,
+	getDapSessionManager,
 	getAvailableAdapters,
 	getAdapterConfigs,
 	selectAttachAdapter,
@@ -454,8 +454,8 @@ function validateLaunchProgram(program: string, _cwd: string, programKind: Launc
 }
 
 function requireCapability(capability: keyof DapCapabilities, description: string): DapSessionSummary {
-	const snapshot = dapSessionManager.getActiveSession();
-	if (dapSessionManager.getCapabilities()?.[capability] !== true) {
+	const snapshot = getDapSessionManager().getActiveSession();
+	if (getDapSessionManager().getCapabilities()?.[capability] !== true) {
 		throw new Error(`Current adapter does not support ${description}`);
 	}
 	return snapshot!;
@@ -463,7 +463,7 @@ function requireCapability(capability: keyof DapCapabilities, description: strin
 
 function resolveDisassemblyReference(memoryReference: string | undefined): string {
 	if (memoryReference) return memoryReference;
-	const snapshot = dapSessionManager.getActiveSession();
+	const snapshot = getDapSessionManager().getActiveSession();
 	return snapshot?.instructionPointerReference ?? "0";
 }
 
@@ -515,7 +515,7 @@ export default function (pi: ExtensionAPI) {
 				const { adapter } = selection;
 				validateLaunchProgram(program, commandCwd, programKind, adapter);
 				const extraLaunchArguments = resolveLaunchOverrides(adapter, program, programKind);
-				const snapshot = await dapSessionManager.launch(
+				const snapshot = await getDapSessionManager().launch(
 					{ adapter, program, args: params.args, cwd: commandCwd, extraLaunchArguments },
 					combinedSignal,
 					timeoutSec * 1000,
@@ -532,7 +532,7 @@ export default function (pi: ExtensionAPI) {
 					if (params.adapter) throw new Error(formatAdapterUnavailable(params.adapter, "", commandCwd));
 					throw new Error(`No debugger adapter available for attach. Installed adapters: ${getConfiguredAdapters(commandCwd)}`);
 				}
-				const snapshot = await dapSessionManager.attach(
+				const snapshot = await getDapSessionManager().attach(
 					{ adapter, cwd: commandCwd, pid: params.pid, port: params.port, host: params.host },
 					combinedSignal,
 					timeoutSec * 1000,
@@ -544,21 +544,21 @@ export default function (pi: ExtensionAPI) {
 			case "set_breakpoint": {
 				if (!params.file || params.line === undefined) throw new Error("set_breakpoint requires file and line");
 				const file = path.resolve(cwd, params.file);
-				const response = await dapSessionManager.setBreakpoint(file, params.line, params.condition, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().setBreakpoint(file, params.line, params.condition, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.breakpoints = response.breakpoints;
 				return text(formatBreakpoints(response.sourcePath, response.breakpoints));
 			}
 			case "remove_breakpoint": {
 				if (params.function) {
-					const response = await dapSessionManager.removeFunctionBreakpoint(params.function, combinedSignal, timeoutSec * 1000);
+					const response = await getDapSessionManager().removeFunctionBreakpoint(params.function, combinedSignal, timeoutSec * 1000);
 					details.snapshot = response.snapshot;
 					details.functionBreakpoints = response.breakpoints;
 					return text(formatFunctionBreakpoints(response.breakpoints));
 				}
 				if (!params.file || params.line === undefined) throw new Error("remove_breakpoint requires file+line or function");
 				const file = path.resolve(cwd, params.file);
-				const response = await dapSessionManager.removeBreakpoint(file, params.line, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().removeBreakpoint(file, params.line, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.breakpoints = response.breakpoints;
 				return text(formatBreakpoints(response.sourcePath, response.breakpoints));
@@ -566,7 +566,7 @@ export default function (pi: ExtensionAPI) {
 			case "set_instruction_breakpoint": {
 				requireCapability("supportsInstructionBreakpoints", "instruction breakpoints");
 				if (!params.instruction_reference) throw new Error("instruction_reference is required for set_instruction_breakpoint");
-				const response = await dapSessionManager.setInstructionBreakpoint(params.instruction_reference, params.offset, params.condition, params.hit_condition, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().setInstructionBreakpoint(params.instruction_reference, params.offset, params.condition, params.hit_condition, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.instructionBreakpoints = response.breakpoints;
 				return text(formatInstructionBreakpoints(response.breakpoints));
@@ -574,7 +574,7 @@ export default function (pi: ExtensionAPI) {
 			case "remove_instruction_breakpoint": {
 				requireCapability("supportsInstructionBreakpoints", "instruction breakpoints");
 				if (!params.instruction_reference) throw new Error("instruction_reference is required for remove_instruction_breakpoint");
-				const response = await dapSessionManager.removeInstructionBreakpoint(params.instruction_reference, params.offset, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().removeInstructionBreakpoint(params.instruction_reference, params.offset, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.instructionBreakpoints = response.breakpoints;
 				return text(formatInstructionBreakpoints(response.breakpoints));
@@ -582,7 +582,7 @@ export default function (pi: ExtensionAPI) {
 			case "data_breakpoint_info": {
 				requireCapability("supportsDataBreakpoints", "data breakpoints");
 				if (!params.name) throw new Error("name is required for data_breakpoint_info");
-				const response = await dapSessionManager.dataBreakpointInfo(params.name, params.variable_ref ?? params.scope_id, params.frame_id, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().dataBreakpointInfo(params.name, params.variable_ref ?? params.scope_id, params.frame_id, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.dataBreakpointInfo = response.info;
 				return text(formatDataBreakpointInfo(response.info));
@@ -590,7 +590,7 @@ export default function (pi: ExtensionAPI) {
 			case "set_data_breakpoint": {
 				requireCapability("supportsDataBreakpoints", "data breakpoints");
 				if (!params.data_id) throw new Error("data_id is required for set_data_breakpoint");
-				const response = await dapSessionManager.setDataBreakpoint(params.data_id, params.access_type, params.condition, params.hit_condition, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().setDataBreakpoint(params.data_id, params.access_type, params.condition, params.hit_condition, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.dataBreakpoints = response.breakpoints;
 				return text(formatDataBreakpoints(response.breakpoints));
@@ -598,66 +598,66 @@ export default function (pi: ExtensionAPI) {
 			case "remove_data_breakpoint": {
 				requireCapability("supportsDataBreakpoints", "data breakpoints");
 				if (!params.data_id) throw new Error("data_id is required for remove_data_breakpoint");
-				const response = await dapSessionManager.removeDataBreakpoint(params.data_id, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().removeDataBreakpoint(params.data_id, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.dataBreakpoints = response.breakpoints;
 				return text(formatDataBreakpoints(response.breakpoints));
 			}
 			case "continue": {
-				const outcome = await dapSessionManager.continue(combinedSignal, timeoutSec * 1000);
+				const outcome = await getDapSessionManager().continue(combinedSignal, timeoutSec * 1000);
 				details.snapshot = outcome.snapshot;
 				details.state = outcome.state;
 				details.timedOut = outcome.timedOut;
 				return text(buildOutcomeText(outcome, timeoutSec, "Continue"));
 			}
 			case "step_over": {
-				const outcome = await dapSessionManager.stepOver(combinedSignal, timeoutSec * 1000);
+				const outcome = await getDapSessionManager().stepOver(combinedSignal, timeoutSec * 1000);
 				details.snapshot = outcome.snapshot;
 				details.state = outcome.state;
 				details.timedOut = outcome.timedOut;
 				return text(buildOutcomeText(outcome, timeoutSec, "Step over"));
 			}
 			case "step_in": {
-				const outcome = await dapSessionManager.stepIn(combinedSignal, timeoutSec * 1000);
+				const outcome = await getDapSessionManager().stepIn(combinedSignal, timeoutSec * 1000);
 				details.snapshot = outcome.snapshot;
 				details.state = outcome.state;
 				details.timedOut = outcome.timedOut;
 				return text(buildOutcomeText(outcome, timeoutSec, "Step in"));
 			}
 			case "step_out": {
-				const outcome = await dapSessionManager.stepOut(combinedSignal, timeoutSec * 1000);
+				const outcome = await getDapSessionManager().stepOut(combinedSignal, timeoutSec * 1000);
 				details.snapshot = outcome.snapshot;
 				details.state = outcome.state;
 				details.timedOut = outcome.timedOut;
 				return text(buildOutcomeText(outcome, timeoutSec, "Step out"));
 			}
 			case "pause": {
-				const snapshot = await dapSessionManager.pause(combinedSignal, timeoutSec * 1000);
+				const snapshot = await getDapSessionManager().pause(combinedSignal, timeoutSec * 1000);
 				details.snapshot = snapshot;
 				return text([...formatSessionSnapshot(snapshot), "Program paused."].join("\n"));
 			}
 			case "evaluate": {
 				if (!params.expression) throw new Error("expression is required for evaluate");
 				const evaluationContext = (params.context as DapEvaluateArguments["context"] | undefined) ?? "repl";
-				const response = await dapSessionManager.evaluate(params.expression, evaluationContext, params.frame_id, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().evaluate(params.expression, evaluationContext, params.frame_id, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.evaluation = response.evaluation;
 				return text(formatEvaluation(response.evaluation));
 			}
 			case "stack_trace": {
-				const response = await dapSessionManager.stackTrace(params.levels, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().stackTrace(params.levels, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.stackFrames = response.stackFrames;
 				return text(formatStackFrames(response.stackFrames));
 			}
 			case "threads": {
-				const response = await dapSessionManager.threads(combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().threads(combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.threads = response.threads;
 				return text(formatThreads(response.threads));
 			}
 			case "scopes": {
-				const response = await dapSessionManager.scopes(params.frame_id, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().scopes(params.frame_id, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.variables = response.scopes as unknown as DapVariable[];
 				return text(formatScopes(response.scopes));
@@ -665,7 +665,7 @@ export default function (pi: ExtensionAPI) {
 			case "variables": {
 				const variableReference = params.variable_ref ?? params.scope_id;
 				if (variableReference === undefined) throw new Error("variables requires variable_ref or scope_id");
-				const response = await dapSessionManager.variables(variableReference, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().variables(variableReference, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.variables = response.variables;
 				return text(formatVariables(response.variables));
@@ -673,7 +673,7 @@ export default function (pi: ExtensionAPI) {
 			case "disassemble": {
 				requireCapability("supportsDisassembleRequest", "disassembly");
 				if (params.instruction_count === undefined) throw new Error("instruction_count is required for disassemble");
-				const response = await dapSessionManager.disassemble(resolveDisassemblyReference(params.memory_reference), params.instruction_count, params.offset, params.instruction_offset, params.resolve_symbols, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().disassemble(resolveDisassemblyReference(params.memory_reference), params.instruction_count, params.offset, params.instruction_offset, params.resolve_symbols, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.disassembly = response.instructions;
 				return text(formatDisassembly(response.instructions));
@@ -682,7 +682,7 @@ export default function (pi: ExtensionAPI) {
 				requireCapability("supportsReadMemoryRequest", "memory reads");
 				if (!params.memory_reference) throw new Error("memory_reference is required for read_memory");
 				if (params.count === undefined) throw new Error("count is required for read_memory");
-				const response = await dapSessionManager.readMemory(params.memory_reference, params.count, params.offset, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().readMemory(params.memory_reference, params.count, params.offset, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.memoryAddress = response.address;
 				details.memoryData = response.data;
@@ -693,46 +693,46 @@ export default function (pi: ExtensionAPI) {
 				requireCapability("supportsWriteMemoryRequest", "memory writes");
 				if (!params.memory_reference) throw new Error("memory_reference is required for write_memory");
 				if (!params.data) throw new Error("data is required for write_memory");
-				const response = await dapSessionManager.writeMemory(params.memory_reference, params.data, params.offset, params.allow_partial, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().writeMemory(params.memory_reference, params.data, params.offset, params.allow_partial, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.bytesWritten = response.bytesWritten;
 				return text(["Memory write completed.", ...(response.bytesWritten !== undefined ? [`Bytes written: ${response.bytesWritten}`] : []), ...(response.offset !== undefined ? [`Offset: ${response.offset}`] : [])].join("\n"));
 			}
 			case "modules": {
 				requireCapability("supportsModulesRequest", "module introspection");
-				const response = await dapSessionManager.modules(params.start_module, params.module_count, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().modules(params.start_module, params.module_count, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.modules = response.modules;
 				return text(formatModules(response.modules));
 			}
 			case "loaded_sources": {
 				requireCapability("supportsLoadedSourcesRequest", "loaded sources");
-				const response = await dapSessionManager.loadedSources(combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().loadedSources(combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.sources = response.sources;
 				return text(formatLoadedSources(response.sources));
 			}
 			case "custom_request": {
 				if (!params.command) throw new Error("command is required for custom_request");
-				const response = await dapSessionManager.customRequest(params.command, params.arguments, combinedSignal, timeoutSec * 1000);
+				const response = await getDapSessionManager().customRequest(params.command, params.arguments, combinedSignal, timeoutSec * 1000);
 				details.snapshot = response.snapshot;
 				details.customBody = response.body;
 				return text(formatCustomResponse(params.command, response.body));
 			}
 			case "output": {
-				const response = dapSessionManager.getOutput();
+				const response = getDapSessionManager().getOutput();
 				details.snapshot = response.snapshot;
 				details.output = response.output;
 				return text(response.output.length > 0 ? response.output : "(no output captured)");
 			}
 			case "terminate": {
-				const snapshot = await dapSessionManager.terminate(combinedSignal, timeoutSec * 1000);
+				const snapshot = await getDapSessionManager().terminate(combinedSignal, timeoutSec * 1000);
 				if (!snapshot) return text("No debug session to terminate.");
 				details.snapshot = snapshot;
 				return text([...formatSessionSnapshot(snapshot), "Debug session terminated."].join("\n"));
 			}
 			case "sessions": {
-				const sessions = dapSessionManager.listSessions();
+				const sessions = getDapSessionManager().listSessions();
 				details.sessions = sessions;
 				return text(formatSessions(sessions));
 			}
