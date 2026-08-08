@@ -486,8 +486,7 @@ export default function (pi: ExtensionAPI) {
 	promptSnippet:
 		"Attach lldb/gdb/dlv/debugpy and step through a real program: launch, set breakpoints, inspect stack/variables/memory",
 	promptGuidelines: [
-		"Use the debug tool to drive a real debugger via DAP, not print statements. Sessions are stateful: launch/attach once, then step/inspect across calls.",
-		"Adapters must be on PATH. lldb-dap for C/C++/Rust, debugpy for Python, dlv for Go.",
+		"Use the debug tool to drive a real debugger via DAP, not print statements. Sessions are stateful: launch/attach once, then step/inspect across calls. Adapters must be on PATH (lldb-dap for C/Rust, debugpy for Python, dlv for Go).",
 	],
 	parameters: debugSchema,
 

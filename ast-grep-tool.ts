@@ -127,15 +127,11 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "ast-grep",
 		label: "ast-grep",
-		description: `Structural code search and rewrite via ast-grep (https://ast-grep.github.io). Match code by AST pattern, not text: the pattern is ordinary code with $UPPER wildcards (e.g. $A) that match any single AST node.
+		description: `Structural code search and rewrite via ast-grep. Match code by AST pattern, not text: the pattern is ordinary code with $UPPER wildcards (e.g. $A) that match any single AST node.
 
-Use for: finding all call sites of a function, detecting a code smell pattern, batch-rewriting idioms across a repo (e.g. console.log($A) -> logger.info($A)). Complements the read-only lsp tool: lsp gives semantic definition/reference resolution, ast-grep gives syntactic structural matching and in-place rewriting.
+Use for: finding call sites, detecting code smells, batch-rewriting idioms (e.g. console.log($A) -> logger.info($A)). Complements lsp: lsp gives semantic resolution, ast-grep gives syntactic matching and in-place rewriting.
 
-Examples:
-- pattern: "console.log($A)" — find all console.log calls
-- pattern: "if ($COND) return $R" — match guard clauses
-- pattern: "$A == null" with rewrite: "$A === null" — batch fix loose equality
-- pattern: "expect($A).toBe($B)" on a test dir — find specific assertion shape`,
+Examples: pattern "console.log($A)" finds all calls; pattern "$A == null" with rewrite "$A === null" batch-fixes loose equality.`,
 		parameters: AstGrepParams,
 
 		async execute(_id: unknown, rawParams: unknown, _onUpdate: unknown, ctxArg: unknown, signalArg: unknown): Promise<any> {

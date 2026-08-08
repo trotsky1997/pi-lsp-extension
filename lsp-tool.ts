@@ -767,10 +767,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "lsp",
 		label: "LSP",
-		description: `Claude-style LSP queries for definitions, references, hover, highlights, symbols, implementations, call hierarchy, and preserved Pi extras.
-
-Core operations: goToDefinition, findReferences, hover, documentHighlight, documentSymbol, workspaceSymbol, goToImplementation, typeDefinition, prepareCallHierarchy, incomingCalls, outgoingCalls.
-Extras: diagnostics, workspaceDiagnostics, signatureHelp, rename, prepareRename, foldingRange, codeAction, setBreakpoint (resolves symbol definition via LSP, then sets a DAP breakpoint — requires an active debug session).`,
+		description: `LSP queries: definition, references, hover, symbols, call hierarchy, diagnostics, rename, code actions. Also includes setBreakpoint (resolves symbol via LSP, sets a DAP breakpoint — requires active debug session).`,
 		parameters: LspParams,
 
 		async execute(
