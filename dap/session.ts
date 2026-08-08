@@ -44,7 +44,11 @@ import type {
 	DapSessionStatus,
 	DapSessionSummary,
 	DapSetDataBreakpointsArguments,
+	DapSetExpressionArguments,
+	DapSetExpressionResponse,
 	DapSetInstructionBreakpointsArguments,
+	DapSetVariableArguments,
+	DapSetVariableResponse,
 	DapSource,
 	DapSourceBreakpoint,
 	DapStackFrame,
@@ -1088,6 +1092,47 @@ export class DapSessionManager {
 			timeoutMs,
 		);
 		return { snapshot: buildSummary(session), evaluation: response };
+	}
+
+	async setVariable(
+		variablesReference: number,
+		name: string,
+		value: string,
+		signal?: AbortSignal,
+		timeoutMs: number = 30_000,
+	): Promise<{ snapshot: DapSessionSummary; variable: DapSetVariableResponse }> {
+		const session = this.#touchActiveSession();
+		const response = await this.#sendRequestWithConfig<DapSetVariableResponse>(
+			session,
+			"setVariable",
+			{ variablesReference, name, value } satisfies DapSetVariableArguments,
+			signal,
+			timeoutMs,
+		);
+		return { snapshot: buildSummary(session), variable: response };
+	}
+
+	async setExpression(
+		expression: string,
+		value: string,
+		frameId: number | undefined,
+		signal?: AbortSignal,
+		timeoutMs: number = 30_000,
+	): Promise<{ snapshot: DapSessionSummary; expression: DapSetExpressionResponse }> {
+		const session = this.#touchActiveSession();
+		const effectiveFrameId = frameId ?? session.stop.frameId;
+		const response = await this.#sendRequestWithConfig<DapSetExpressionResponse>(
+			session,
+			"setExpression",
+			{
+				expression,
+				value,
+				...(effectiveFrameId !== undefined ? { frameId: effectiveFrameId } : {}),
+			} satisfies DapSetExpressionArguments,
+			signal,
+			timeoutMs,
+		);
+		return { snapshot: buildSummary(session), expression: response };
 	}
 
 	getOutput(limitBytes?: number): DapOutputSnapshot {

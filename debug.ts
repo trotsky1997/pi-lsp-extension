@@ -67,6 +67,8 @@ const ACTIONS = [
 	"step_out",
 	"pause",
 	"evaluate",
+	"set_variable",
+	"set_expression",
 	"stack_trace",
 	"threads",
 	"scopes",
@@ -105,6 +107,7 @@ const debugSchema = Type.Object({
 	hit_condition: Type.Optional(Type.String()),
 	log_message: Type.Optional(Type.String({ description: "log breakpoint message (no stop)" })),
 	expression: Type.Optional(Type.String()),
+	value: Type.Optional(Type.String({ description: "new value for set_variable / set_expression" })),
 	context: Type.Optional(Type.String({ description: "evaluate context: watch | repl | hover | variables | clipboard" })),
 	frame_id: Type.Optional(Type.Number()),
 	scope_id: Type.Optional(Type.Number()),
@@ -651,6 +654,19 @@ export default function (pi: ExtensionAPI) {
 				details.snapshot = response.snapshot;
 				details.evaluation = response.evaluation;
 				return text(formatEvaluation(response.evaluation));
+			}
+			case "set_variable": {
+				requireCapability("supportsSetVariable", "set_variable");
+				if (params.variable_ref === undefined || !params.name || params.value === undefined) throw new Error("set_variable requires variable_ref, name, and value");
+				const response = await getDapSessionManager().setVariable(params.variable_ref, params.name, params.value, combinedSignal, timeoutSec * 1000);
+				details.snapshot = response.snapshot;
+				return text(`${params.name} = ${response.variable.value}${response.variable.type ? ` (${response.variable.type})` : ""}`);
+			}
+			case "set_expression": {
+				if (!params.expression || params.value === undefined) throw new Error("set_expression requires expression and value");
+				const response = await getDapSessionManager().setExpression(params.expression, params.value, params.frame_id, combinedSignal, timeoutSec * 1000);
+				details.snapshot = response.snapshot;
+				return text(`${params.expression} = ${response.expression.value}${response.expression.type ? ` (${response.expression.type})` : ""}`);
 			}
 			case "stack_trace": {
 				const response = await getDapSessionManager().stackTrace(params.levels, combinedSignal, timeoutSec * 1000);

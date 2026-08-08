@@ -394,6 +394,42 @@ export interface DapEvaluateResponse {
 	memoryReference?: string;
 }
 
+export interface DapSetVariableArguments {
+	variablesReference: number;
+	name: string;
+	value: string;
+	format?: Record<string, unknown>;
+}
+
+export interface DapSetVariableResponse {
+	value: string;
+	type?: string;
+	variablesReference?: number;
+	namedVariables?: number;
+	indexedVariables?: number;
+}
+
+export interface DapSetExpressionArguments {
+	expression: string;
+	value: string;
+	frameId?: number;
+	format?: Record<string, unknown>;
+}
+
+export interface DapSetExpressionResponse {
+	value: string;
+	type?: string;
+	presentationHint?: {
+		kind?: string;
+		attributes?: string[];
+		visibility?: string;
+		lazy?: boolean;
+	};
+	variablesReference?: number;
+	namedVariables?: number;
+	indexedVariables?: number;
+}
+
 export interface DapThread {
 	id: number;
 	name: string;
