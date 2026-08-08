@@ -29,12 +29,14 @@ import {
 	resolveLaunchOverrides,
 	type DapBreakpointRecord,
 	type DapCapabilities,
+	type DapCompletionItem,
 	type DapContinueOutcome,
 	type DapDataBreakpointInfoResponse,
 	type DapDataBreakpointRecord,
 	type DapDisassembledInstruction,
 	type DapEvaluateArguments,
 	type DapEvaluateResponse,
+	type DapExceptionBreakpointFilter,
 	type DapFunctionBreakpointRecord,
 	type DapInstructionBreakpointRecord,
 	type DapModule,
@@ -79,6 +81,10 @@ const ACTIONS = [
 	"modules",
 	"loaded_sources",
 	"custom_request",
+	"set_exception_breakpoints",
+	"exception_filters",
+	"completions",
+	"restart",
 	"output",
 	"terminate",
 	"sessions",
@@ -116,6 +122,10 @@ const debugSchema = Type.Object({
 	port: Type.Optional(Type.Number({ description: "remote attach port" })),
 	host: Type.Optional(Type.String()),
 	levels: Type.Optional(Type.Number()),
+	text: Type.Optional(Type.String({ description: "completions: text to complete" })),
+	column: Type.Optional(Type.Number({ description: "completions: column (1-based)" })),
+	filters: Type.Optional(Type.Array(Type.String({ description: "exception filter ids" }))),
+	filter_options: Type.Optional(Type.Array(Type.Object({ filterId: Type.String(), condition: Type.Optional(Type.String()) }))),
 	memory_reference: Type.Optional(Type.String({ description: "address or memory reference" })),
 	instruction_reference: Type.Optional(Type.String()),
 	instruction_count: Type.Optional(Type.Number()),
@@ -378,6 +388,24 @@ function formatCustomResponse(command: string, body: unknown): string {
 		serialized = String(body);
 	}
 	return `${command} response:\n${serialized}`;
+}
+
+function formatExceptionFilters(filters: DapExceptionBreakpointFilter[]): string {
+	if (filters.length === 0) return "Exception filters: (none — adapter reports no exceptionBreakpointFilters)";
+	const lines = ["Exception filters:"];
+	for (const f of filters) {
+		lines.push(`- ${f.filter} (${f.label}${f.default ? ", default on" : ""}): ${f.description ?? ""}${f.supportsCondition ? " [supports condition" + (f.conditionDescription ? ": " + f.conditionDescription : "") + "]" : ""}`);
+	}
+	return lines.join("\n");
+}
+
+function formatCompletions(targets: DapCompletionItem[]): string {
+	if (targets.length === 0) return "Completions: (none)";
+	const lines = ["Completions:"];
+	for (const t of targets) {
+		lines.push(`- ${t.label}${t.type ? ` [${t.type}]` : ""}${t.detail ? ` — ${t.detail}` : ""}`);
+	}
+	return lines.join("\n");
 }
 
 function formatSessions(sessions: DapSessionSummary[]): string {
@@ -742,6 +770,30 @@ export default function (pi: ExtensionAPI) {
 				details.snapshot = response.snapshot;
 				details.customBody = response.body;
 				return text(formatCustomResponse(params.command, response.body));
+			}
+			case "exception_filters": {
+				const filters = getDapSessionManager().getExceptionBreakpointFilters();
+				details.snapshot = getDapSessionManager().getActiveSession();
+				return text(formatExceptionFilters(filters));
+			}
+			case "set_exception_breakpoints": {
+				if (!params.filters) throw new Error("filters is required for set_exception_breakpoints (pass [] to clear)");
+				const response = await getDapSessionManager().setExceptionBreakpoints(params.filters, params.filter_options, combinedSignal, timeoutSec * 1000);
+				details.snapshot = response.snapshot;
+				return text([...formatSessionSnapshot(response.snapshot), `Exception breakpoints set: ${params.filters.length ? params.filters.join(", ") : "(cleared)"}`].join("\n"));
+			}
+			case "completions": {
+				requireCapability("supportsCompletionsRequest", "completions");
+				if (!params.text || params.column === undefined) throw new Error("completions requires text and column");
+				const response = await getDapSessionManager().completions(params.text, params.column, params.frame_id, combinedSignal, timeoutSec * 1000);
+				details.snapshot = response.snapshot;
+				return text(formatCompletions(response.targets));
+			}
+			case "restart": {
+				requireCapability("supportsRestartRequest", "restart");
+				const snapshot = await getDapSessionManager().restart(combinedSignal, timeoutSec * 1000);
+				details.snapshot = snapshot;
+				return text([...formatSessionSnapshot(snapshot), "Debug session restarted."].join("\n"));
 			}
 			case "output": {
 				const response = getDapSessionManager().getOutput();

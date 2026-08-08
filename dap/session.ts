@@ -18,9 +18,13 @@ import type {
 	DapDisassembleArguments,
 	DapDisassembledInstruction,
 	DapDisassembleResponse,
+	DapCompletionsArguments,
+	DapCompletionsResponse,
+	DapCompletionItem,
 	DapEvaluateArguments,
 	DapEvaluateResponse,
 	DapExitedEventBody,
+	DapExceptionBreakpointFilter,
 	DapFunctionBreakpoint,
 	DapFunctionBreakpointRecord,
 	DapInitializeArguments,
@@ -36,6 +40,7 @@ import type {
 	DapPauseArguments,
 	DapReadMemoryArguments,
 	DapReadMemoryResponse,
+	DapRestartArguments,
 	DapResolvedAdapter,
 	DapRunInTerminalArguments,
 	DapRunInTerminalResponse,
@@ -44,6 +49,7 @@ import type {
 	DapSessionStatus,
 	DapSessionSummary,
 	DapSetDataBreakpointsArguments,
+	DapSetExceptionBreakpointsArguments,
 	DapSetExpressionArguments,
 	DapSetExpressionResponse,
 	DapSetInstructionBreakpointsArguments,
@@ -1133,6 +1139,59 @@ export class DapSessionManager {
 			timeoutMs,
 		);
 		return { snapshot: buildSummary(session), expression: response };
+	}
+
+	getExceptionBreakpointFilters(): DapExceptionBreakpointFilter[] {
+		const session = this.#getActiveSessionOrNull();
+		return session?.capabilities?.exceptionBreakpointFilters ?? [];
+	}
+
+	async setExceptionBreakpoints(
+		filters: string[],
+		filterOptions?: { filterId: string; condition?: string }[],
+		signal?: AbortSignal,
+		timeoutMs: number = 30_000,
+	): Promise<{ snapshot: DapSessionSummary }> {
+		const session = this.#touchActiveSession();
+		const args = { filters, ...(filterOptions ? { filterOptions } : {}) } satisfies DapSetExceptionBreakpointsArguments;
+		await this.#sendRequestWithConfig<unknown>(session, "setExceptionBreakpoints", args, signal, timeoutMs);
+		return { snapshot: buildSummary(session) };
+	}
+
+	async completions(
+		text: string,
+		column: number,
+		frameId: number | undefined,
+		signal?: AbortSignal,
+		timeoutMs: number = 30_000,
+	): Promise<{ snapshot: DapSessionSummary; targets: DapCompletionItem[] }> {
+		const session = this.#touchActiveSession();
+		const effectiveFrameId = frameId ?? session.stop.frameId;
+		const response = await this.#sendRequestWithConfig<DapCompletionsResponse>(
+			session,
+			"completions",
+			{ text, column, ...(effectiveFrameId !== undefined ? { frameId: effectiveFrameId } : {}) } satisfies DapCompletionsArguments,
+			signal,
+			timeoutMs,
+		);
+		return { snapshot: buildSummary(session), targets: response.targets ?? [] };
+	}
+
+	async restart(signal?: AbortSignal, timeoutMs: number = 30_000): Promise<DapSessionSummary> {
+		const session = this.#getActiveSessionOrNull();
+		if (!session) throw new Error("No active debug session to restart");
+		const root = this.#getRootSession(session);
+		const adapter = session.adapter;
+		const launchArguments: DapLaunchArguments = {
+			...adapter.launchDefaults,
+			program: session.program ?? "",
+			cwd: session.cwd,
+			restart: true,
+		} satisfies DapRestartArguments & DapLaunchArguments;
+		await this.#sendRequestWithConfig<unknown>(root, "restart", launchArguments, signal, timeoutMs);
+		root.stop = {};
+		root.status = "running";
+		return buildSummary(root);
 	}
 
 	getOutput(limitBytes?: number): DapOutputSnapshot {

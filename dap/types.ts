@@ -110,6 +110,7 @@ export interface DapCapabilities {
 	supportsModulesRequest?: boolean;
 	supportsLoadedSourcesRequest?: boolean;
 	supportsExceptionInfoRequest?: boolean;
+	exceptionBreakpointFilters?: DapExceptionBreakpointFilter[];
 	supportsInstructionBreakpoints?: boolean;
 	supportsDataBreakpoints?: boolean;
 	supportsSteppingGranularity?: boolean;
@@ -448,6 +449,46 @@ export interface DapOutputEventBody {
 	line?: number;
 	column?: number;
 	data?: unknown;
+}
+
+export interface DapExceptionBreakpointFilter {
+	filter: string;
+	label: string;
+	description?: string;
+	default?: boolean;
+	supportsCondition?: boolean;
+	conditionDescription?: string;
+}
+
+export interface DapSetExceptionBreakpointsArguments {
+	filters: string[];
+	filterOptions?: { filterId: string; condition?: string }[];
+}
+
+export interface DapCompletionsArguments {
+	text: string;
+	column: number;
+	frameId?: number;
+	line?: number;
+}
+
+export interface DapCompletionItem {
+	label: string;
+	type?: string;
+	start?: number;
+	length?: number;
+	selectionStart?: number;
+	selectionLength?: number;
+	detail?: string;
+	sortText?: string;
+}
+
+export interface DapCompletionsResponse {
+	targets: DapCompletionItem[];
+}
+
+export interface DapRestartArguments {
+	restart?: boolean;
 }
 
 export interface DapStoppedEventBody {
