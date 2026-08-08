@@ -1,7 +1,7 @@
 {
   "name": "lsp-pi",
   "version": "1.0.5",
-  "description": "LSP and formatter extension for pi-coding-agent with config-first language server, diagnostics, and format-on-write support",
+  "description": "LSP, formatter, and DAP debugger extension for pi-coding-agent with config-first language server, diagnostics, format-on-write, and real debugger (lldb/gdb/dlv/debugpy) support",
   "scripts": {
     "test": "npx tsx tests/lsp.test.ts",
     "test:tool": "npx tsx tests/index.test.ts",
@@ -30,7 +30,13 @@
     "rust",
     "pi-coding-agent",
     "extension",
-    "pi-package"
+    "pi-package",
+    "dap",
+    "debugger",
+    "debug-adapter-protocol",
+    "lldb",
+    "gdb",
+    "delve"
   ],
   "author": "",
   "license": "MIT",
@@ -39,7 +45,8 @@
     "extensions": [
       "./lsp.ts",
       "./lsp-tool.ts",
-      "./ast-grep-tool.ts"
+      "./ast-grep-tool.ts",
+      "./debug.ts"
     ],
     "skills": [
       "./skills"

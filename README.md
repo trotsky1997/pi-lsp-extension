@@ -18,6 +18,7 @@ It also ships a reusable setup skill at `skills/lsp-configurator/` for interacti
 - built-in registries for many LSP servers, formatters, and analyzers
 - `/lsp` status output and `/lsp doctor` workspace diagnostics
 - bundled `lsp-configurator` skill for guided setup
+- **`debug` tool** — drives a real debugger (lldb-dap, gdb, dlv, debugpy, codelldb, rdbg, …) via the Debug Adapter Protocol. Launch/attach, set breakpoints, step, inspect stack/variables/memory, evaluate expressions. Sessions persist across calls.
 
 ## Quick start
 
@@ -339,6 +340,56 @@ See `CONFIGURATION.md` for the full schema and supported IDs.
 For grouped per-language examples, including `minimal`, fuller strict
 profiles, and recommended install commands, see
 `docs/language-config-examples.md`.
+
+## `debug` tool usage
+
+The `debug` tool drives a real debugger via DAP (Debug Adapter Protocol). It is
+a port of oh-my-pi's debug capability (https://github.com/can1357/oh-my-pi,
+MIT, Can Boluk / Mario Zechner). The DAP engine lives in `dap/`; the tool entry
+point is `debug.ts`.
+
+**Actions** (28 total):
+
+- **Launch/attach**: `launch`, `attach`, `terminate`, `sessions`
+- **Breakpoints**: `set_breakpoint`, `remove_breakpoint`, `set_instruction_breakpoint`, `remove_instruction_breakpoint`, `data_breakpoint_info`, `set_data_breakpoint`, `remove_data_breakpoint`
+- **Execution**: `continue`, `step_over`, `step_in`, `step_out`, `pause`
+- **Inspection**: `stack_trace`, `threads`, `scopes`, `variables`, `disassemble`, `read_memory`, `loaded_sources`, `modules`, `output`
+- **Evaluation**: `evaluate`, `write_memory`, `custom_request`
+
+Sessions persist across tool calls — launch once, then step and inspect.
+
+**Adapter configuration**: built-in adapters are in `dap/defaults.json` (gdb,
+lldb-dap, codelldb, debugpy, dlv, js-debug-adapter, netcoredbg, rdbg, etc).
+Override via `dap.json` / `.dap.json` / `dap.yaml` in:
+- `~/.pi/` (user)
+- `.pi/` (project, walked up from cwd)
+
+The adapter binary must be installed and on PATH. `lsp-pi` does not auto-install
+debuggers.
+
+### Example: debugging a segfault
+
+```
+debug action=launch program=./myapp adapter=lldb-dap
+debug action=set_breakpoint file=src/main.rs line=42
+debug action=continue
+debug action=stack_trace
+debug action=variables
+debug action=evaluate expression=*ptr
+debug action=terminate
+```
+
+### Example: debugging Python
+
+```
+debug action=launch program=./script.py adapter=debugpy
+debug action=set_breakpoint file=script.py line=12
+debug action=continue
+debug action=scopes
+debug action=variables
+debug action=evaluate expression=x
+debug action=terminate
+```
 
 ### Example config
 
