@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getConfigDirPaths, getPreloadedPluginRoots, hasRootMarkers, isRecord, logger, parseYaml, resolveCommand, WhichCachePolicy } from "./_deps.js";
+import { getConfigDirPaths, getPreloadedPluginRoots, hasRootMarkers, isEnoent, isRecord, logger, parseYaml, resolveCommand, WhichCachePolicy } from "./_deps.js";
 import DEFAULTS from "./defaults.json" with { type: "json" };
 import type { DapAdapterConfig, DapResolvedAdapter } from "./types.js";
 
@@ -61,7 +61,9 @@ function readConfigFile(filePath: string): NormalizedConfig | null {
 	try {
 		const content = fs.readFileSync(filePath, "utf-8");
 		return normalizeConfig(parseConfigContent(content, filePath));
-	} catch {
+	} catch (error) {
+		if (isEnoent(error)) return null;
+		logger.warn("Failed to parse DAP config file; user adapters from this file will be unavailable.", { filePath, error: error instanceof Error ? error.message : String(error) });
 		return null;
 	}
 }
